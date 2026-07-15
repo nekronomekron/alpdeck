@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "author": "Anonymous maker",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "id": "esp",
+      "type": "board-esp32-s3-devkitc-1",
+      "attrs": { "serialInterface": "USB_SERIAL_JTAG" }
+    }
+  ],
+  "connections": []
+}

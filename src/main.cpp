@@ -5,7 +5,9 @@
 #include <WiFi.h>
 
 #include "config/AppConfig.h"
+#include "core/Display.h"
 #include "core/Logger.h"
+#include "utils/Bootscreen.h"
 
 #ifndef WOKWI_SIMULATOR
 const char* ssid = "IoT";
@@ -23,14 +25,20 @@ void setup() {
     // block forever: with no host attached — or in the Wokwi simulator, where
     // the CDC connected-state isn't asserted — this must fall through.
     const unsigned long serialStart = millis();
-    while (!Serial && millis() - serialStart < 3000) {
+    while (!Serial && millis() - serialStart < 1000) {
         yield();
     }
 
+    delay(1000);
     Serial.begin(115200);
 
     Logger::begin(Serial, static_cast<Logger::Level>(Config::LOG_LEVEL));
     Logger::setSerialOutputEnabled(Config::LOG_SERIAL_OUTPUT);
+
+    Display::init();
+
+    Bootscreen bootscreen;
+    Display::drawFullWindow([&](Adafruit_GFX& gfx) { bootscreen.init(gfx); });
 
     String script = String("print('Hello world from Lua!')");
     LOGI("Lua", "Executing Lua script: %s", lua.Lua_dostring(&script));
@@ -38,12 +46,41 @@ void setup() {
     // NOTE: In the Wokwi simulator, WiFi only joins the open SSID "Wokwi-GUEST"
     // (empty password). Any other SSID never reaches WL_CONNECTED.
 
+    delay(2000);
+
+    int16_t x, y, w, h;
+    bootscreen.progressWindow(x, y, w, h);
+
+    Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
+        bootscreen.drawProgress(gfx, 0.2f);
+    });
+    delay(2000);
+    Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
+        bootscreen.drawProgress(gfx, 0.4f);
+    });
+    delay(2000);
+    Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
+        bootscreen.drawProgress(gfx, 0.6f);
+    });
+    delay(2000);
+    Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
+        bootscreen.drawProgress(gfx, 0.8f);
+    });
+    delay(2000);
+    Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
+        bootscreen.drawProgress(gfx, 1.0f);
+    });
+    delay(2000);
+
+    Display::shutdown();
+
     LOGI("Wifi", "%s, %s", ssid, password);
 
     WiFi.begin(ssid, password);
     const unsigned long wifiTimeoutMs = 15000;
     const unsigned long wifiStart = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < wifiTimeoutMs) {
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - wifiStart < wifiTimeoutMs) {
         delay(500);
         Serial.print(".");
     }
@@ -65,4 +102,8 @@ void setup() {
     }
 }
 
-void loop() { ftpSrv.handleFTP(); }
+void loop() {
+    ftpSrv.handleFTP();
+
+    delay(100);
+}
