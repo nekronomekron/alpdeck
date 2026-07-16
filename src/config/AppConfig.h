@@ -22,7 +22,7 @@
 
 namespace Config {
 constexpr const char* APP_NAME = "alpdeck";
-constexpr const char* APP_SUBTITLE = "games | tools | hackz";
+constexpr const char* APP_SUBTITLE = "apps | games | tools";
 
 constexpr uint8_t APP_VERSION_MAJOR = 0;
 constexpr uint8_t APP_VERSION_MINOR = 1;
@@ -40,5 +40,15 @@ constexpr int16_t DISPLAY_PIN_BUSY = 1;
 constexpr int16_t DISPLAY_PIN_SCK = 12;
 constexpr int16_t DISPLAY_PIN_MISO = 13;
 constexpr int16_t DISPLAY_PIN_MOSI = 11;
+
+// SD card. Shares the display's SPI bus, so only CS is board-specific: the
+// LOLIN S3 PRO wires its onboard TF slot to IO46.
+constexpr int16_t SD_PIN_CS = 46;
+
+// FTP exposes LittleFS and the SD card as sibling mounts, /flash and /sd.
+constexpr const char* FTP_MOUNT_FLASH = "flash";
+constexpr const char* FTP_MOUNT_SD = "sd";
+constexpr const char* FTP_USER = "alpdeck";
+constexpr const char* FTP_PASSWORD = "alpdeck";
 
 }  // namespace Config

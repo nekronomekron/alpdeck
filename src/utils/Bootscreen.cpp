@@ -9,12 +9,11 @@ void Bootscreen::init(Adafruit_GFX& gfx) {
     gfx.fillRect(0, 0, _w, _h, _white);
     drawLogo(gfx);
 
-    // Wortmarke + Tagline (GFX-Systemfont: 6x8 px pro Zeichen)
     textCentered(gfx, Config::APP_NAME, cx(), base() + 22, 4);
     textCentered(gfx, Config::APP_SUBTITLE, cx(), base() + 62, 1);
 
     drawProgress(gfx, 0.0f);
-    textCentered(gfx, "initializing...", cx(), base() + 108, 1);
+    // textCentered(gfx, "initializing...", cx(), base() + 108, 1);
 
     gfx.setTextSize(1);
     gfx.setTextColor(_black);
@@ -40,7 +39,6 @@ void Bootscreen::drawProgress(Adafruit_GFX& gfx, float progress) {
     const int16_t fill = (int16_t)((pw - 4) * progress);
     if (fill > 0) {
         gfx.fillRect(px + 2, py + 2, fill, ph - 4, _black);
-        // gedittherter Randblock: die "gerade refreshende" Kante
         const int16_t dw = (8 < pw - 4 - fill) ? 8 : pw - 4 - fill;
         for (int16_t yy = py + 2; yy < py + ph - 2; yy++)
             for (int16_t xx = px + 2 + fill; xx < px + 2 + fill + dw; xx++)
@@ -52,22 +50,17 @@ void Bootscreen::drawProgress(Adafruit_GFX& gfx, float progress) {
 void Bootscreen::drawLogo(Adafruit_GFX& gfx) {
     const int16_t b = base();
 
-    // hinterer Gipfel: Kontur, Hoehe = Halbbreite -> exakt 45 Grad
     const int16_t bxc = cx() + 70, bh = 82, bapex = b - bh;
     gfx.drawLine(bxc - bh, b, bxc, bapex, _black);
     gfx.drawLine(bxc, bapex, bxc + bh, b, _black);
 
-    // Schneegrenze: Zickzack aus 45-Grad-Segmenten, Enden auf den Flanken
     const int16_t y0 = bapex + 27;
     zigzag(gfx, bxc, y0);
 
-    // vorderer Gipfel: gefuellt, zeilenweise gerastert
     const int16_t fx = cx() - 62, fh = 74, a = b - fh;
     for (int16_t t = 0; t <= fh; t++)
         gfx.drawFastHLine(fx - t, a + t, 2 * t + 1, _black);
 
-    // Schneekappe: oben Dreieck, unten zwei 45-Grad-Zacken;
-    // 3px Flankenrand bleibt schwarz (geschlossene Silhouette)
     for (int16_t t = 3; t < 17; t++)
         gfx.drawFastHLine(fx - t + 3, a + t, 2 * t - 5, _white);
     for (int16_t t = 17; t < 25; t++) {
@@ -76,7 +69,7 @@ void Bootscreen::drawLogo(Adafruit_GFX& gfx) {
         gfx.drawFastHLine(fx + t - 16, a + t, wz, _white);
     }
 
-    gfx.fillRect(cx() - 142, b, 296, 2, _black);  // Grundlinie
+    gfx.fillRect(cx() - 142, b, 296, 2, _black);
 }
 
 void Bootscreen::textCentered(Adafruit_GFX& gfx, const char* s, int16_t xc,

@@ -1,7 +1,8 @@
 #include <Arduino.h>
+#include <ESP-FTP-Server-Lib.h>
+#include <LittleFS.h>
 #include <LuaWrapper.h>
-#include <SPIFFS.h>
-#include <SimpleFTPServer.h>
+#include <SD.h>
 #include <WiFi.h>
 
 #include "config/AppConfig.h"
@@ -18,7 +19,8 @@ const char* password = "";
 #endif
 
 LuaWrapper lua;
-FtpServer ftpSrv;
+FTPServer ftpSrv;
+bool sdMounted = false;
 
 void setup() {
     // Give the USB-CDC host (serial monitor) a moment to attach, but never
@@ -46,33 +48,48 @@ void setup() {
     // NOTE: In the Wokwi simulator, WiFi only joins the open SSID "Wokwi-GUEST"
     // (empty password). Any other SSID never reaches WL_CONNECTED.
 
-    delay(2000);
+    // delay(2000);
 
-    int16_t x, y, w, h;
-    bootscreen.progressWindow(x, y, w, h);
+    // int16_t x, y, w, h;
+    // bootscreen.progressWindow(x, y, w, h);
 
-    Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
-        bootscreen.drawProgress(gfx, 0.2f);
-    });
-    delay(2000);
-    Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
-        bootscreen.drawProgress(gfx, 0.4f);
-    });
-    delay(2000);
-    Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
-        bootscreen.drawProgress(gfx, 0.6f);
-    });
-    delay(2000);
-    Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
-        bootscreen.drawProgress(gfx, 0.8f);
-    });
-    delay(2000);
-    Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
-        bootscreen.drawProgress(gfx, 1.0f);
-    });
-    delay(2000);
+    // Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
+    //     bootscreen.drawProgress(gfx, 0.2f);
+    // });
+    // delay(2000);
+    // Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
+    //     bootscreen.drawProgress(gfx, 0.4f);
+    // });
+    // delay(2000);
+    // Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
+    //     bootscreen.drawProgress(gfx, 0.6f);
+    // });
+    // delay(2000);
+    // Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
+    //     bootscreen.drawProgress(gfx, 0.8f);
+    // });
+    // delay(2000);
+    // Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
+    //     bootscreen.drawProgress(gfx, 1.0f);
+    // });
+    // delay(2000);
 
-    Display::shutdown();
+    if (!LittleFS.begin(true)) {
+        LOGE("FS", "LittleFS mount failed");
+    } else {
+        LOGI("FS", "LittleFS mounted (%u/%u bytes used)", LittleFS.usedBytes(),
+             LittleFS.totalBytes());
+    }
+
+    // The SD card shares the display's SPI bus; Display::init() already called
+    // SPI.begin() for it, and the display is hibernated by now with CS released.
+    sdMounted = SD.begin(Config::SD_PIN_CS, SPI);
+    if (!sdMounted) {
+        LOGW("FS", "SD mount failed; /%s will not be served",
+             Config::FTP_MOUNT_SD);
+    } else {
+        LOGI("FS", "SD mounted (%llu bytes)", SD.cardSize());
+    }
 
     LOGI("Wifi", "%s, %s", ssid, password);
 
@@ -94,16 +111,19 @@ void setup() {
     Serial.print("Connected. IP: ");
     Serial.println(WiFi.localIP());
 
-    // Mount filesystem before starting FTP
-    if (SPIFFS.begin(true)) {
-        Serial.println("SPIFFS opened!");
-        // username, password for ftp.
-        ftpSrv.begin("esp32", "esp32");
+    ftpSrv.addUser(Config::FTP_USER, Config::FTP_PASSWORD);
+    ftpSrv.addFilesystem(Config::FTP_MOUNT_FLASH, &LittleFS);
+    if (sdMounted) {
+        ftpSrv.addFilesystem(Config::FTP_MOUNT_SD, &SD);
     }
+    ftpSrv.begin();
+    LOGI("FTP", "Server started on %s", WiFi.localIP().toString().c_str());
+
+    Display::shutdown();
 }
 
 void loop() {
-    ftpSrv.handleFTP();
+    ftpSrv.handle();
 
-    delay(100);
+    delay(10);
 }

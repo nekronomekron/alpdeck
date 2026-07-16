@@ -35,6 +35,8 @@ void Display::drawFullWindow(std::function<void(Adafruit_GFX&)> drawFunction) {
     do {
         drawFunction(display);
     } while (display.nextPage());
+
+    display.hibernate();
 }
 
 void Display::drawPartialWindow(
@@ -45,4 +47,6 @@ void Display::drawPartialWindow(
     do {
         drawFunction(display);
     } while (display.nextPage());
+
+    display.hibernate();
 }
