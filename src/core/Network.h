@@ -8,11 +8,11 @@ class Network {
 public:
     static constexpr const char* kLogTag = "Network";
 
-    // Never blocks waiting for a network. Connects when credentials are stored,
-    // otherwise raises the AP-mode setup portal and returns immediately.
+    // Never blocks. Starts connecting when credentials are stored, otherwise
+    // raises the setup portal, and returns either way.
     static void init();
 
-    // Drives the portal and detects connection changes. Call from loop().
+    // Drives the connect state machine and the portal. Call from loop().
     static void loop();
 
     static bool isConnected();
@@ -23,11 +23,21 @@ public:
     static void onConnected(std::function<void()> callback);
     static void onDisconnected(std::function<void()> callback);
 
-private:
-    static void startPortal();
-    static void updateConnectionState();
+    // Forgets the stored network and raises the portal.
+    static void forget();
 
-    static bool _connected;
+private:
+    enum class State { Idle, Connecting, Connected, Portal };
+
+    static void startConnect(const String& ssid, const String& password);
+    static void startPortal();
+    static void applyCredentials(const String& ssid, const String& password);
+    static String statusJson();
+    static void setConnected(bool connected);
+
+    static State _state;
+    static bool _lastAttemptFailed;
+    static unsigned long _connectStartedMs;
     static std::function<void()> _onConnected;
     static std::function<void()> _onDisconnected;
 };

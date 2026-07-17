@@ -51,12 +51,13 @@ constexpr const char* FTP_MOUNT_SD = "sd";
 constexpr const char* FTP_USER = APP_NAME;
 constexpr const char* FTP_PASSWORD = APP_NAME;
 
-// WiFi setup portal, raised in AP mode when no credentials are stored. The
-// password must be at least 8 characters or the AP silently comes up open.
+// WiFi setup portal, raised in AP mode when no credentials are stored. The AP
+// is open; anyone in range can reach the portal and set the network.
 constexpr const char* WIFI_AP_SSID = APP_NAME;
 constexpr const char* WIFI_WOKWI_SSID = "Wokwi-GUEST";
 
-// Bounds the boot-time connect attempt so a missing AP can't stall startup.
+// How long a connect attempt runs before falling back to the portal. Nothing
+// blocks for this long — it only bounds the state machine.
 constexpr uint16_t WIFI_CONNECT_TIMEOUT_S = 15;
 
 }  // namespace Config

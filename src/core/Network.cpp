@@ -1,83 +1,176 @@
 #include "core/Network.h"
 
+#include <Preferences.h>
 #include <WiFi.h>
 
 #include "config/AppConfig.h"
+#include "core/CaptivePortal.h"
 #include "core/Logger.h"
 
-#ifndef WOKWI_SIMULATOR
-#include <WiFiManager.h>
-
 namespace {
-WiFiManager wm;
-}
-#endif
+Preferences prefs;
 
-bool Network::_connected = false;
+constexpr const char* kPrefsNamespace = "alpdeck-wifi";
+constexpr const char* kKeySsid = "ssid";
+constexpr const char* kKeyPass = "pass";
+
+struct Credentials {
+    String ssid;
+    String password;
+    bool valid() const { return !ssid.isEmpty(); }
+};
+
+Credentials loadCredentials() {
+    Credentials creds;
+    prefs.begin(kPrefsNamespace, true);  // read-only
+    creds.ssid = prefs.getString(kKeySsid, "");
+    creds.password = prefs.getString(kKeyPass, "");
+    prefs.end();
+    return creds;
+}
+
+void storeCredentials(const String& ssid, const String& password) {
+    prefs.begin(kPrefsNamespace, false);
+    prefs.putString(kKeySsid, ssid);
+    prefs.putString(kKeyPass, password);
+    prefs.end();
+}
+
+void eraseCredentials() {
+    prefs.begin(kPrefsNamespace, false);
+    prefs.clear();
+    prefs.end();
+}
+}  // namespace
+
+Network::State Network::_state = Network::State::Idle;
+bool Network::_lastAttemptFailed = false;
+unsigned long Network::_connectStartedMs = 0;
 std::function<void()> Network::_onConnected;
 std::function<void()> Network::_onDisconnected;
 
 void Network::init() {
 #ifdef WOKWI_SIMULATOR
-    // The simulator only ever joins the open "Wokwi-GUEST" SSID and offers no
-    // way to drive a captive portal, so the portal is compiled out entirely.
+    // The simulator only joins the open "Wokwi-GUEST" SSID and cannot drive a
+    // captive portal, so the portal is skipped entirely there.
     LOGI(kLogTag, "Wokwi build: joining %s", Config::WIFI_WOKWI_SSID);
     WiFi.mode(WIFI_STA);
-    WiFi.begin(Config::WIFI_WOKWI_SSID, "");
+    startConnect(Config::WIFI_WOKWI_SSID, "");
 #else
-    // Stored credentials live in NVS and are only readable once the WiFi driver
-    // is up, so the mode has to be set before getWiFiIsSaved() is meaningful.
     WiFi.mode(WIFI_STA);
+    // Keep the driver from rewriting its own copy of the credentials on every
+    // begin(); the Preferences namespace is the single source of truth.
+    WiFi.persistent(false);
+    WiFi.setAutoReconnect(true);
 
-    wm.setDebugOutput(Config::LOG_LEVEL >= Logger::Debug);
-    wm.setConfigPortalBlocking(false);
-    wm.setConfigPortalTimeout(0);  // portal stays up until it is configured
-    wm.setConnectTimeout(Config::WIFI_CONNECT_TIMEOUT_S);
-    wm.setHostname(Config::APP_NAME);
+    CaptivePortal::onSubmit(applyCredentials);
+    CaptivePortal::onStatus(statusJson);
 
-    if (wm.getWiFiIsSaved()) {
-        LOGI(kLogTag, "Stored credentials found, connecting to %s",
-             WiFi.SSID().c_str());
-        // Bounded by setConnectTimeout. On failure this raises the portal
-        // itself, so stale or mistyped credentials stay correctable.
-        wm.autoConnect(Config::WIFI_AP_SSID, "");
+    const Credentials creds = loadCredentials();
+    if (creds.valid()) {
+        LOGI(kLogTag, "Stored credentials found for '%s'", creds.ssid.c_str());
+        startConnect(creds.ssid, creds.password);
     } else {
         LOGI(kLogTag, "No stored credentials; starting setup portal");
         startPortal();
     }
 #endif
+}
 
-    updateConnectionState();
+void Network::startConnect(const String& ssid, const String& password) {
+    LOGI(kLogTag, "Connecting to '%s'", ssid.c_str());
+
+    // Returns immediately; loop() polls for the result. This is the whole
+    // reason the boot no longer stalls waiting on a network.
+    WiFi.begin(ssid.c_str(), password.c_str());
+
+    _connectStartedMs = millis();
+    _state = State::Connecting;
 }
 
 void Network::startPortal() {
 #ifndef WOKWI_SIMULATOR
-    LOGD(kLogTag, "Stack free before portal: %u bytes",
-         uxTaskGetStackHighWaterMark(nullptr));
-
-    // Returns immediately: the portal is non-blocking, and process() drives it.
-    wm.startConfigPortal(Config::WIFI_AP_SSID, "");
-
-    LOGD(kLogTag, "Stack free after portal: %u bytes",
-         uxTaskGetStackHighWaterMark(nullptr));
-    LOGI(kLogTag, "Setup portal on SSID '%s' at %s", Config::WIFI_AP_SSID,
-         WiFi.softAPIP().toString().c_str());
+    CaptivePortal::begin(Config::WIFI_AP_SSID);
+    _state = State::Portal;
 #endif
+}
+
+void Network::applyCredentials(const String& ssid, const String& password) {
+    storeCredentials(ssid, password);
+    _lastAttemptFailed = false;
+
+    // The portal deliberately stays up until the connection succeeds, so the
+    // user keeps a page to read the result on if the password was wrong.
+    startConnect(ssid, password);
+}
+
+void Network::forget() {
+    eraseCredentials();
+    WiFi.disconnect(false, true);
+    setConnected(false);
+    LOGW(kLogTag, "Stored network forgotten");
+    startPortal();
 }
 
 void Network::loop() {
-#ifndef WOKWI_SIMULATOR
-    wm.process();
-#endif
-    updateConnectionState();
+    CaptivePortal::loop();
+
+    const bool connected = WiFi.status() == WL_CONNECTED;
+
+    switch (_state) {
+    case State::Connecting:
+        if (connected) {
+            _lastAttemptFailed = false;
+            setConnected(true);
+            _state = State::Connected;
+            // Tear the AP down only once there is a real connection to fall
+            // back on, so a failed attempt never strands the user.
+            if (CaptivePortal::isActive()) {
+                CaptivePortal::stop();
+            }
+        } else if (millis() - _connectStartedMs >
+                   Config::WIFI_CONNECT_TIMEOUT_S * 1000UL) {
+            _lastAttemptFailed = true;
+            LOGW(kLogTag, "Connect timed out");
+            // Stored credentials that don't work are still correctable: fall
+            // back to the portal rather than retrying forever in silence.
+            if (!CaptivePortal::isActive()) {
+                startPortal();
+            } else {
+                _state = State::Portal;
+            }
+        }
+        break;
+
+    case State::Connected:
+        if (!connected) {
+            setConnected(false);
+            // The driver auto-reconnects; just wait for it to come back.
+            _connectStartedMs = millis();
+            _state = State::Connecting;
+        }
+        break;
+
+    case State::Portal:
+        // A late connect can still land here if the AP reappeared.
+        if (connected) {
+            setConnected(true);
+            _state = State::Connected;
+            CaptivePortal::stop();
+        }
+        break;
+
+    case State::Idle:
+        break;
+    }
 }
 
-void Network::updateConnectionState() {
-    const bool connected = WiFi.status() == WL_CONNECTED;
-    if (connected == _connected) {
+void Network::setConnected(bool connected) {
+    static bool wasConnected = false;
+    if (connected == wasConnected) {
         return;
     }
-    _connected = connected;
+    wasConnected = connected;
 
     if (connected) {
         LOGI(kLogTag, "Connected to %s, IP %s", WiFi.SSID().c_str(),
@@ -93,15 +186,28 @@ void Network::updateConnectionState() {
     }
 }
 
-bool Network::isConnected() { return _connected; }
+String Network::statusJson() {
+    String state;
+    if (_state == State::Connected) {
+        state = "connected";
+    } else if (_lastAttemptFailed) {
+        state = "failed";
+    } else {
+        state = "connecting";
+    }
 
-bool Network::isPortalActive() {
-#ifndef WOKWI_SIMULATOR
-    return wm.getConfigPortalActive();
-#else
-    return false;
-#endif
+    String out = "{\"state\":\"" + state + "\"";
+    if (_state == State::Connected) {
+        out += ",\"ssid\":\"" + WiFi.SSID() + "\"";
+        out += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
+    }
+    out += '}';
+    return out;
 }
+
+bool Network::isConnected() { return _state == State::Connected; }
+
+bool Network::isPortalActive() { return CaptivePortal::isActive(); }
 
 void Network::onConnected(std::function<void()> callback) {
     _onConnected = std::move(callback);
