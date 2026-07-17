@@ -12,7 +12,7 @@ void Bootscreen::init(Adafruit_GFX& gfx) {
     textCentered(gfx, Config::APP_NAME, cx(), base() + 22, 4);
     textCentered(gfx, Config::APP_SUBTITLE, cx(), base() + 62, 1);
 
-    drawProgress(gfx, 0.0f);
+    // drawProgress(gfx, 0.0f);
     // textCentered(gfx, "initializing...", cx(), base() + 108, 1);
 
     gfx.setTextSize(1);
