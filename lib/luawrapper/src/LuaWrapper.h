@@ -3,7 +3,13 @@
 
 #include "Arduino.h"
 
-#define LUA_USE_C89
+// NOTE: the Lua integer/number width MUST be configured with a global build
+// flag (see LUA_32BITS in platformio.ini), never a #define here. Defining it in
+// this header only affects translation units that include it, while the Lua
+// library's own .c files compile with a different width -- an ABI mismatch that
+// makes lua_pushinteger/lua_seti pass values the library misreads, so every
+// integer (table keys, file sizes) crosses the boundary as garbage. That bug
+// stayed hidden until the first binding passed integers to Lua.
 #include "lua/lua.hpp"
 
 // One instance owns one lua_State. Construct per app launch and destroy on exit

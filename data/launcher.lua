@@ -62,20 +62,14 @@ local function discover()
         return
     end
 
-    sys.log("discover: " .. #entries .. " entries under " .. APPS_DIR)
-
     for _, entry in ipairs(entries) do
         -- What makes something an app is a readable main.lua, not the directory
         -- flag. Probing for the file directly is both simpler and robust to a
         -- missing or unreliable `dir` field from the fs binding.
         local dir = APPS_DIR .. "/" .. entry.name
         local entryPath = dir .. "/" .. ENTRY
-        local hasMain = fs.exists(entryPath)
 
-        sys.log("  '" .. tostring(entry.name) .. "' dir=" ..
-            tostring(entry.dir) .. " main=" .. tostring(hasMain))
-
-        if hasMain then
+        if fs.exists(entryPath) then
             local meta = manifestFor(dir) or {}
             apps[#apps + 1] = {
                 name = meta.name or entry.name,

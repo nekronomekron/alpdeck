@@ -2,8 +2,6 @@
 #include <LittleFS.h>
 #include <SD.h>
 
-#include <functional>
-
 #include "config/AppConfig.h"
 #include "core/Display.h"
 #include "core/DynamicFTPServer.h"
@@ -104,25 +102,17 @@ void setup() {
     } else {
         LOGI("FS", "SD mounted (%llu bytes)", SD.cardSize());
 
-        // Diagnostic: apps live at the card's /apps, because /sd is a virtual
-        // mount the bindings strip. Walk two levels so the log shows whether
-        // /apps/<name>/main.lua actually exists on the card, not just /apps.
-        std::function<void(const char*, int)> dump = [&](const char* path,
-                                                         int depth) {
-            File dir = SD.open(path);
-            if (!dir || !dir.isDirectory()) {
-                return;
-            }
-            for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
-                LOGD("FS", "  sd:%s%s", e.path(), e.isDirectory() ? "/" : "");
-                if (e.isDirectory() && depth > 0) {
-                    dump(e.path(), depth - 1);
-                }
+        // Log the card's top level. Apps live at /apps here (the /sd prefix is
+        // a virtual mount the bindings strip), so this is a quick check that the
+        // layout is right.
+        File root = SD.open("/");
+        if (root && root.isDirectory()) {
+            for (File e = root.openNextFile(); e; e = root.openNextFile()) {
+                LOGD("FS", "  sd:/%s%s", e.name(), e.isDirectory() ? "/" : "");
                 e.close();
             }
-            dir.close();
-        };
-        dump("/", 2);
+            root.close();
+        }
     }
 
     // FTP only exists once there's a network to serve it on, so it is started

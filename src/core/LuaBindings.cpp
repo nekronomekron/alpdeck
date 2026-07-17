@@ -183,10 +183,12 @@ int l_fs_list(lua_State* L) {
     }
 
     lua_newtable(L);
-    int index = 1;
-    for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
-        lua_newtable(L);
+    // Absolute index of the result table, so storing into it never depends on
+    // the fluctuating relative top during entry construction.
+    const int resultIndex = lua_gettop(L);
+    lua_Integer index = 1;
 
+    for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
         // entry.name() is a bare name on some cores and a full path on others;
         // normalise to the last segment so apps see one shape.
         String name = entry.name();
@@ -194,24 +196,24 @@ int l_fs_list(lua_State* L) {
         if (slash >= 0) {
             name = name.substring(slash + 1);
         }
+        const bool isDir = entry.isDirectory();
+        const size_t size = entry.size();
+        entry.close();
 
-        LOGD(LuaBindings::kLogTag, "  entry '%s' dir=%d size=%u", name.c_str(),
-             entry.isDirectory(), static_cast<unsigned>(entry.size()));
-
+        lua_newtable(L);
         lua_pushstring(L, name.c_str());
         lua_setfield(L, -2, "name");
-        lua_pushboolean(L, entry.isDirectory());
+        lua_pushboolean(L, isDir);
         lua_setfield(L, -2, "dir");
-        lua_pushinteger(L, entry.size());
+        lua_pushinteger(L, static_cast<lua_Integer>(size));
         lua_setfield(L, -2, "size");
-
-        lua_rawseti(L, -2, index++);
-        entry.close();
+        lua_seti(L, resultIndex, index++);
     }
     dir.close();
 
-    LOGI(LuaBindings::kLogTag, "fs.list('%s') -> %s:'%s' : %d entries", path.c_str(),
-         onSd ? "SD" : "LittleFS", localPath.c_str(), index - 1);
+    LOGD(LuaBindings::kLogTag, "fs.list('%s') -> %s:'%s' : %d entries",
+         path.c_str(), onSd ? "SD" : "LittleFS", localPath.c_str(),
+         static_cast<int>(index - 1));
     return 1;
 }
 

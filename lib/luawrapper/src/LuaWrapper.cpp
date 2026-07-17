@@ -2,6 +2,13 @@
 
 #include <esp_heap_caps.h>
 
+// Tripwire for the LUA_32BITS build flag. If it is dropped, this TU and the Lua
+// library would disagree on sizeof(lua_Integer) and integers would cross the C
+// boundary corrupted -- a bug that is invisible until an integer is actually
+// passed. Fail the build instead.
+static_assert(sizeof(lua_Integer) == 4,
+              "lua_Integer must be 32-bit; add -DLUA_32BITS to build_flags");
+
 namespace {
 // The VM hook fires this often. Small enough that a stop request is noticed
 // promptly, large enough that the check does not dominate execution.
