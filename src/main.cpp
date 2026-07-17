@@ -1,19 +1,72 @@
 #include <Arduino.h>
 #include <LittleFS.h>
-#include <LuaWrapper.h>
 #include <SD.h>
+
+#include <functional>
 
 #include "config/AppConfig.h"
 #include "core/Display.h"
 #include "core/DynamicFTPServer.h"
+#include "core/Input.h"
 #include "core/Logger.h"
+#include "core/LuaBindings.h"
+#include "core/LuaHost.h"
 #include "core/Network.h"
 #include "utils/Bootscreen.h"
 
-LuaWrapper lua;
-
 bool sdMounted = false;
-bool ftpStarted = false;
+
+// Everything runnable is a Lua script on the host's task: boot.lua first, then
+// the launcher, then whatever the launcher picks. Exactly one runs at a time.
+void startLauncher() {
+    // The launcher only browses; an empty root denies it every fs write.
+    LuaBindings::setSandboxRoot("");
+
+    if (!LuaHost::run(Config::LAUNCHER_PATH)) {
+        LOGE("Boot", "Launcher %s could not start", Config::LAUNCHER_PATH);
+    }
+}
+
+void startApp(const String& path) {
+    // Confine writes to the app's own directory: strip the trailing entry file.
+    String root = path;
+    const int slash = root.lastIndexOf('/');
+    if (slash > 0) {
+        root = root.substring(0, slash);
+    }
+    LuaBindings::setSandboxRoot(root);
+
+    if (!LuaHost::run(path)) {
+        LOGE("Boot", "%s could not start; returning to the launcher",
+             path.c_str());
+        startLauncher();
+    }
+}
+
+// Fires on the main loop once a script's VM is fully torn down, so starting the
+// next one here can never leave two states alive.
+void onScriptFinished(const LuaHost::Finished& finished) {
+    const String request = LuaBindings::takeLaunchRequest();
+
+    if (!request.isEmpty()) {
+        startApp(request);
+        return;
+    }
+
+    // Anything else -- clean return, error, or cancellation -- lands back at
+    // the launcher, which is what makes a crashing app survivable.
+    if (finished.path != Config::LAUNCHER_PATH) {
+        startLauncher();
+        return;
+    }
+
+    // The launcher itself returned without a launch request. Restarting it
+    // immediately would spin, so only do so if it failed outright.
+    if (finished.exit == LuaHost::Exit::Failed ||
+        finished.exit == LuaHost::Exit::NotFound) {
+        LOGE("Boot", "Launcher stopped unexpectedly; not restarting");
+    }
+}
 
 void setup() {
     // Give the USB-CDC host (serial monitor) a moment to attach, but never
@@ -35,38 +88,6 @@ void setup() {
     Bootscreen bootscreen;
     Display::drawFullWindow([&](Adafruit_GFX& gfx) { bootscreen.init(gfx); });
 
-    String script = String("print('Hello world from Lua!')");
-    LOGI("Lua", "Executing Lua script: %s", lua.Lua_dostring(&script));
-
-    // NOTE: In the Wokwi simulator, WiFi only joins the open SSID "Wokwi-GUEST"
-    // (empty password). Any other SSID never reaches WL_CONNECTED.
-
-    // delay(2000);
-
-    // int16_t x, y, w, h;
-    // bootscreen.progressWindow(x, y, w, h);
-
-    // Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
-    //     bootscreen.drawProgress(gfx, 0.2f);
-    // });
-    // delay(2000);
-    // Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
-    //     bootscreen.drawProgress(gfx, 0.4f);
-    // });
-    // delay(2000);
-    // Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
-    //     bootscreen.drawProgress(gfx, 0.6f);
-    // });
-    // delay(2000);
-    // Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
-    //     bootscreen.drawProgress(gfx, 0.8f);
-    // });
-    // delay(2000);
-    // Display::drawPartialWindow(x, y, w, h, [&](Adafruit_GFX& gfx) {
-    //     bootscreen.drawProgress(gfx, 1.0f);
-    // });
-    // delay(2000);
-
     if (!LittleFS.begin(true)) {
         LOGE("FS", "LittleFS mount failed");
     } else {
@@ -82,6 +103,26 @@ void setup() {
              Config::FTP_MOUNT_SD);
     } else {
         LOGI("FS", "SD mounted (%llu bytes)", SD.cardSize());
+
+        // Diagnostic: apps live at the card's /apps, because /sd is a virtual
+        // mount the bindings strip. Walk two levels so the log shows whether
+        // /apps/<name>/main.lua actually exists on the card, not just /apps.
+        std::function<void(const char*, int)> dump = [&](const char* path,
+                                                         int depth) {
+            File dir = SD.open(path);
+            if (!dir || !dir.isDirectory()) {
+                return;
+            }
+            for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+                LOGD("FS", "  sd:%s%s", e.path(), e.isDirectory() ? "/" : "");
+                if (e.isDirectory() && depth > 0) {
+                    dump(e.path(), depth - 1);
+                }
+                e.close();
+            }
+            dir.close();
+        };
+        dump("/", 2);
     }
 
     // FTP only exists once there's a network to serve it on, so it is started
@@ -91,12 +132,32 @@ void setup() {
     Network::onDisconnected(DynamicFTPServer::shutdown);
     Network::init();
 
-    Display::shutdown();
+    Input::init();
+
+    LuaHost::init();
+    LuaHost::onFinished(onScriptFinished);
+
+    // Deliberately no Display::shutdown() here any more. It blanked the panel
+    // and hibernated it immediately before the first script ran, so anything
+    // drawing afterwards started from a cleared screen. The bootscreen now
+    // stays up until the launcher's first frame replaces it.
+
+    // boot.lua is the user hook, so it runs with the same privileges as an app
+    // but rooted at LittleFS. If it requests a launch, onScriptFinished honours
+    // it and the launcher is skipped.
+    LuaBindings::setSandboxRoot("");
+    if (!LuaHost::run(Config::BOOT_SCRIPT_PATH)) {
+        LOGW("Boot", "%s missing; starting the launcher directly",
+             Config::BOOT_SCRIPT_PATH);
+        startLauncher();
+    }
 }
 
 void loop() {
     Network::loop();
     DynamicFTPServer::loop();
+    Input::poll();
+    LuaHost::loop();
 
-    delay(10);
+    // delay(10);
 }

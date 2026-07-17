@@ -58,3 +58,39 @@ void Display::drawPartialWindow(
 
     display.hibernate();
 }
+
+bool Display::_frameOpen = false;
+
+void Display::beginFrame(bool partial) {
+    if (_frameOpen) {
+        return;  // already drawing; keep the caller's existing frame
+    }
+
+    if (partial) {
+        display.setPartialWindow(0, 0, display.width(), display.height());
+    } else {
+        display.setFullWindow();
+    }
+
+    display.firstPage();
+    _frameOpen = true;
+}
+
+void Display::endFrame() {
+    if (!_frameOpen) {
+        return;
+    }
+    _frameOpen = false;
+
+    // One page covers the panel, so this single call renders the whole frame.
+    display.nextPage();
+    display.hibernate();
+}
+
+bool Display::frameOpen() { return _frameOpen; }
+
+Adafruit_GFX& Display::canvas() { return display; }
+
+int16_t Display::width() { return display.width(); }
+
+int16_t Display::height() { return display.height(); }

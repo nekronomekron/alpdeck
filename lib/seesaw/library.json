@@ -1,0 +1,12 @@
+{
+  "name": "seesaw",
+  "version": "1.7.9",
+  "description": "Vendored core of Adafruit's seesaw library (Adafruit_seesaw only). Upstream declares a dependency on 'Adafruit ST7735 and ST7789 Library', which in turn pulls in arduino-libraries/SD. That SD build is AVR-only and, once in libdeps, shadows the ESP32 core's own SD library and breaks the build. No seesaw source file includes ST7735 or SD -- only its examples do -- so the core is vendored here with an honest dependency list. Upstream: https://github.com/adafruit/Adafruit_Seesaw (BSD).",
+  "keywords": "seesaw, encoder, i2c",
+  "license": "BSD-3-Clause",
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "dependencies": {
+    "adafruit/Adafruit BusIO": "^1.17.2"
+  }
+}

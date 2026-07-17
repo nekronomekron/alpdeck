@@ -41,9 +41,52 @@ constexpr int16_t DISPLAY_PIN_SCK = 12;
 constexpr int16_t DISPLAY_PIN_MISO = 13;
 constexpr int16_t DISPLAY_PIN_MOSI = 11;
 
-// SD card. Shares the display's SPI bus, so only CS is board-specific: the
-// LOLIN S3 PRO wires its onboard TF slot to IO46.
+// SD card. Shares the display's SPI bus, so only CS is board-specific. Matches
+// TF_CS in the LOLIN S3 PRO variant's pins_arduino.h.
 constexpr int16_t SD_PIN_CS = 46;
+
+// Adafruit ANO Rotary Navigation Encoder on the I2C STEMMA QT adapter (seesaw,
+// product 5740) using the board's default I2C pins: both are broken out on the
+// header and clear of the display and SD.
+constexpr int16_t I2C_PIN_SDA = 9;
+constexpr int16_t I2C_PIN_SCL = 10;
+constexpr uint32_t I2C_FREQUENCY = 400000;
+
+// The ANO adapter answers on 0x49 — not the 0x36 the plain QT encoder uses.
+constexpr uint8_t ENCODER_I2C_ADDRESS = 0x49;
+constexpr uint16_t ENCODER_PRODUCT_ID = 5740;
+
+// Switch pins are seesaw-side, not ESP32 GPIOs. All are active-low pull-ups.
+constexpr uint8_t ENCODER_PIN_SELECT = 1;
+constexpr uint8_t ENCODER_PIN_UP = 2;
+constexpr uint8_t ENCODER_PIN_LEFT = 3;
+constexpr uint8_t ENCODER_PIN_DOWN = 4;
+constexpr uint8_t ENCODER_PIN_RIGHT = 5;
+
+constexpr uint16_t ENCODER_LONG_PRESS_MS = 700;
+constexpr uint8_t ENCODER_DEBOUNCE_MS = 25;
+
+// Lua script run at the end of setup(), read from LittleFS. It reaches the
+// device over FTP as /flash/boot.lua, and ships in the data/ directory.
+constexpr const char* BOOT_SCRIPT_PATH = "/boot.lua";
+
+// The launcher lives on LittleFS, not the SD card, so the device still boots to
+// something usable with no card inserted. Apps live on the SD card.
+constexpr const char* LAUNCHER_PATH = "/launcher.lua";
+constexpr const char* APPS_DIR = "/sd/apps";
+constexpr const char* APP_ENTRY_FILE = "main.lua";
+constexpr const char* APP_MANIFEST_FILE = "app.lua";
+
+// Lua apps run on their own FreeRTOS task so a busy script cannot stall the
+// network or FTP. Pinned to core 1 alongside the Arduino loop; core 0 carries
+// the WiFi stack.
+constexpr uint32_t LUA_TASK_STACK_BYTES = 16384;
+constexpr uint8_t LUA_TASK_PRIORITY = 1;
+constexpr uint8_t LUA_TASK_CORE = 1;
+
+// The VM hook fires every N bytecode instructions to yield and to check for a
+// stop request. Lower is more responsive but costs throughput.
+constexpr int LUA_HOOK_INSTRUCTION_COUNT = 1000;
 
 // FTP exposes LittleFS and the SD card as sibling mounts, /flash and /sd.
 constexpr const char* FTP_MOUNT_FLASH = "flash";
