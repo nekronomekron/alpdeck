@@ -48,7 +48,15 @@ constexpr int16_t SD_PIN_CS = 46;
 // FTP exposes LittleFS and the SD card as sibling mounts, /flash and /sd.
 constexpr const char* FTP_MOUNT_FLASH = "flash";
 constexpr const char* FTP_MOUNT_SD = "sd";
-constexpr const char* FTP_USER = "alpdeck";
-constexpr const char* FTP_PASSWORD = "alpdeck";
+constexpr const char* FTP_USER = APP_NAME;
+constexpr const char* FTP_PASSWORD = APP_NAME;
+
+// WiFi setup portal, raised in AP mode when no credentials are stored. The
+// password must be at least 8 characters or the AP silently comes up open.
+constexpr const char* WIFI_AP_SSID = APP_NAME;
+constexpr const char* WIFI_WOKWI_SSID = "Wokwi-GUEST";
+
+// Bounds the boot-time connect attempt so a missing AP can't stall startup.
+constexpr uint16_t WIFI_CONNECT_TIMEOUT_S = 15;
 
 }  // namespace Config

@@ -14,6 +14,14 @@ void Display::init() {
     SPI.begin(Config::DISPLAY_PIN_SCK, Config::DISPLAY_PIN_MISO,
               Config::DISPLAY_PIN_MOSI, Config::DISPLAY_PIN_CS);
 
+    // GxEPD2 presets each control pin's level with a digitalWrite before the
+    // matching pinMode, to keep the line glitch-free. Core 3.x discards writes
+    // to pins it hasn't yet registered as GPIO and logs an error for each, so
+    // claim them here first. Cosmetic: GxEPD2 re-asserts every level itself.
+    pinMode(Config::DISPLAY_PIN_CS, OUTPUT);
+    pinMode(Config::DISPLAY_PIN_DC, OUTPUT);
+    pinMode(Config::DISPLAY_PIN_RST, OUTPUT);
+
     display.init(115200, true, 2, false);
     display.setRotation(0);
 }

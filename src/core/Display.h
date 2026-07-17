@@ -3,6 +3,8 @@
 #include <Adafruit_GFX.h>
 #include <Arduino.h>
 
+#include <functional>
+
 class Display {
 public:
     static constexpr const char* kLogTag = "Display";

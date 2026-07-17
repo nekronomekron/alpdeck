@@ -1,26 +1,19 @@
 #include <Arduino.h>
-#include <ESP-FTP-Server-Lib.h>
 #include <LittleFS.h>
 #include <LuaWrapper.h>
 #include <SD.h>
-#include <WiFi.h>
 
 #include "config/AppConfig.h"
 #include "core/Display.h"
+#include "core/DynamicFTPServer.h"
 #include "core/Logger.h"
+#include "core/Network.h"
 #include "utils/Bootscreen.h"
 
-#ifndef WOKWI_SIMULATOR
-const char* ssid = "IoT";
-const char* password = "05021904";
-#else
-const char* ssid = "Wokwi-GUEST";
-const char* password = "";
-#endif
-
 LuaWrapper lua;
-FTPServer ftpSrv;
+
 bool sdMounted = false;
+bool ftpStarted = false;
 
 void setup() {
     // Give the USB-CDC host (serial monitor) a moment to attach, but never
@@ -91,39 +84,19 @@ void setup() {
         LOGI("FS", "SD mounted (%llu bytes)", SD.cardSize());
     }
 
-    LOGI("Wifi", "%s, %s", ssid, password);
-
-    WiFi.begin(ssid, password);
-    const unsigned long wifiTimeoutMs = 15000;
-    const unsigned long wifiStart = millis();
-    while (WiFi.status() != WL_CONNECTED &&
-           millis() - wifiStart < wifiTimeoutMs) {
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.println();
-
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("WiFi connect timed out; continuing without network.");
-        return;
-    }
-
-    Serial.print("Connected. IP: ");
-    Serial.println(WiFi.localIP());
-
-    ftpSrv.addUser(Config::FTP_USER, Config::FTP_PASSWORD);
-    ftpSrv.addFilesystem(Config::FTP_MOUNT_FLASH, &LittleFS);
-    if (sdMounted) {
-        ftpSrv.addFilesystem(Config::FTP_MOUNT_SD, &SD);
-    }
-    ftpSrv.begin();
-    LOGI("FTP", "Server started on %s", WiFi.localIP().toString().c_str());
+    // FTP only exists once there's a network to serve it on, so it is started
+    // from the connect callback rather than here — that covers both a boot-time
+    // auto-connect and credentials arriving later via the setup portal.
+    Network::onConnected([&]() { DynamicFTPServer::init(sdMounted); });
+    Network::onDisconnected(DynamicFTPServer::shutdown);
+    Network::init();
 
     Display::shutdown();
 }
 
 void loop() {
-    ftpSrv.handle();
+    Network::loop();
+    DynamicFTPServer::loop();
 
     delay(10);
 }
