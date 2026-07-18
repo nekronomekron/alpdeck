@@ -102,7 +102,16 @@ void Input::pollRotation() {
 }
 
 void Input::pollSwitches(uint32_t nowMs) {
-    const uint32_t bits = encoder.digitalReadBulk(switchMask());
+    const uint32_t mask = switchMask();
+    const uint32_t bits = encoder.digitalReadBulk(mask);
+
+    // A failed I2C read comes back as zeros, which active-low decodes as every
+    // switch pressed at once -- physically implausible on a 5-way navigator.
+    // Skip the sample rather than publish five phantom presses.
+    if ((bits & mask) == 0) {
+        LOGD(kLogTag, "Implausible switch sample (bus glitch?), skipped");
+        return;
+    }
 
     for (Switch& sw : switches) {
         const bool pressed = (bits & (1UL << sw.pin)) == 0;  // active low

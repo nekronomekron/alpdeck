@@ -29,7 +29,6 @@ constexpr uint8_t APP_VERSION_MINOR = 1;
 
 constexpr uint8_t LOG_LEVEL = 3;  // 0=error, 1=warn, 2=info, 3=debug
 constexpr bool LOG_SERIAL_OUTPUT = true;
-constexpr bool LOG_SERIAL_SENSORS_OUTPUT = false;
 
 // Display Pins
 constexpr int16_t DISPLAY_PIN_CS = 7;

@@ -1,12 +1,11 @@
 #include "core/LuaHost.h"
 
-#include <LittleFS.h>
 #include <LuaWrapper.h>
-#include <SD.h>
 
 #include "config/AppConfig.h"
 #include "core/LuaBindings.h"
 #include "core/Logger.h"
+#include "core/Vfs.h"
 
 namespace {
 TaskHandle_t taskHandle = nullptr;
@@ -18,23 +17,6 @@ SemaphoreHandle_t lock = nullptr;
 // destroyed. Without the lock, requestStop() could reach a freed wrapper.
 LuaWrapper* activeWrapper = nullptr;
 String activePath;
-
-// Paths are rooted the same way the FTP mounts are: /sd/... is the card,
-// everything else is LittleFS. Keeps one path vocabulary across FTP, the
-// launcher and the fs bindings.
-fs::FS& resolveFs(const String& path, String& localPath) {
-    const String prefix = String("/") + Config::FTP_MOUNT_SD;
-    if (path == prefix) {
-        localPath = "/";
-        return SD;
-    }
-    if (path.startsWith(prefix + "/")) {
-        localPath = path.substring(prefix.length());
-        return SD;
-    }
-    localPath = path;
-    return LittleFS;
-}
 }  // namespace
 
 std::function<void(const LuaHost::Finished&)> LuaHost::_onFinished;
@@ -50,19 +32,33 @@ void LuaHost::init() {
 
 bool LuaHost::readScript(const String& path, String& source) {
     String localPath;
-    fs::FS& fs = resolveFs(path, localPath);
+    fs::FS& fs = Vfs::resolve(path, localPath);
 
     File file = fs.open(localPath, "r");
     if (!file || file.isDirectory()) {
         return false;
     }
 
+    const size_t expected = file.size();
     source = file.readString();
     file.close();
+
+    // A short read (I/O error, out of memory) would otherwise surface later as
+    // a baffling syntax error in a truncated chunk; fail it here instead.
+    if (source.length() != expected) {
+        LOGE(kLogTag, "Short read for %s (%u of %u bytes)", path.c_str(),
+             source.length(), expected);
+        return false;
+    }
     return true;
 }
 
 bool LuaHost::run(const String& path) {
+    if (results == nullptr || lock == nullptr) {
+        LOGE(kLogTag, "Host not initialized; cannot run %s", path.c_str());
+        return false;
+    }
+
     if (isRunning()) {
         LOGW(kLogTag, "'%s' is already running; refusing to start '%s'",
              activePath.c_str(), path.c_str());
@@ -70,7 +66,7 @@ bool LuaHost::run(const String& path) {
     }
 
     String localPath;
-    fs::FS& fs = resolveFs(path, localPath);
+    fs::FS& fs = Vfs::resolve(path, localPath);
     if (!fs.exists(localPath)) {
         LOGE(kLogTag, "%s not found", path.c_str());
         return false;

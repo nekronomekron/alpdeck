@@ -12,7 +12,9 @@
 #include "core/Network.h"
 #include "utils/Bootscreen.h"
 
+namespace {
 bool sdMounted = false;
+}  // namespace
 
 // Everything runnable is a Lua script on the host's task: boot.lua first, then
 // the launcher, then whatever the launcher picks. Exactly one runs at a time.
@@ -67,6 +69,8 @@ void onScriptFinished(const LuaHost::Finished& finished) {
 }
 
 void setup() {
+    Serial.begin(115200);
+
     // Give the USB-CDC host (serial monitor) a moment to attach, but never
     // block forever: with no host attached — or in the Wokwi simulator, where
     // the CDC connected-state isn't asserted — this must fall through.
@@ -74,9 +78,7 @@ void setup() {
     while (!Serial && millis() - serialStart < 1000) {
         yield();
     }
-
     delay(1000);
-    Serial.begin(115200);
 
     Logger::begin(Serial, static_cast<Logger::Level>(Config::LOG_LEVEL));
     Logger::setSerialOutputEnabled(Config::LOG_SERIAL_OUTPUT);
@@ -118,7 +120,7 @@ void setup() {
     // FTP only exists once there's a network to serve it on, so it is started
     // from the connect callback rather than here — that covers both a boot-time
     // auto-connect and credentials arriving later via the setup portal.
-    Network::onConnected([&]() { DynamicFTPServer::init(sdMounted); });
+    Network::onConnected([]() { DynamicFTPServer::init(sdMounted); });
     Network::onDisconnected(DynamicFTPServer::shutdown);
     Network::init();
 
@@ -148,6 +150,4 @@ void loop() {
     DynamicFTPServer::loop();
     Input::poll();
     LuaHost::loop();
-
-    // delay(10);
 }

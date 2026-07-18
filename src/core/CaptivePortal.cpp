@@ -9,6 +9,7 @@
 
 #include "config/AppConfig.h"
 #include "core/Logger.h"
+#include "utils/JsonUtil.h"
 
 namespace {
 DNSServer dns;
@@ -93,25 +94,6 @@ ST.textContent='could not connect. check the password and try again.'}
 else{ST.textContent='connecting...'}})}
 scan();
 </script></body></html>)HTML";
-
-String jsonEscape(const String& raw) {
-    String out;
-    out.reserve(raw.length() + 8);
-    for (size_t i = 0; i < raw.length(); i++) {
-        const char c = raw[i];
-        if (c == '"' || c == '\\') {
-            out += '\\';
-            out += c;
-        } else if (c >= 0 && c < 0x20) {
-            char esc[7];
-            snprintf(esc, sizeof(esc), "\\u%04x", c);
-            out += esc;
-        } else {
-            out += c;
-        }
-    }
-    return out;
-}
 }  // namespace
 
 bool CaptivePortal::_active = false;

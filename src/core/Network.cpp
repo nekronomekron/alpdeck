@@ -6,6 +6,7 @@
 #include "config/AppConfig.h"
 #include "core/CaptivePortal.h"
 #include "core/Logger.h"
+#include "utils/JsonUtil.h"
 
 namespace {
 Preferences prefs;
@@ -134,10 +135,13 @@ void Network::loop() {
             LOGW(kLogTag, "Connect timed out");
             // Stored credentials that don't work are still correctable: fall
             // back to the portal rather than retrying forever in silence.
-            if (!CaptivePortal::isActive()) {
-                startPortal();
-            } else {
+            startPortal();
+            if (CaptivePortal::isActive()) {
                 _state = State::Portal;
+            } else {
+                // No portal on this build (simulator): restart the timeout so
+                // the driver keeps retrying without logging every loop pass.
+                _connectStartedMs = millis();
             }
         }
         break;
@@ -198,7 +202,7 @@ String Network::statusJson() {
 
     String out = "{\"state\":\"" + state + "\"";
     if (_state == State::Connected) {
-        out += ",\"ssid\":\"" + WiFi.SSID() + "\"";
+        out += ",\"ssid\":\"" + jsonEscape(WiFi.SSID()) + "\"";
         out += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
     }
     out += '}';

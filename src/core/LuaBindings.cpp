@@ -1,6 +1,5 @@
 #include "core/LuaBindings.h"
 
-#include <LittleFS.h>
 #include <LuaWrapper.h>
 #include <SD.h>
 #include <esp_heap_caps.h>
@@ -9,28 +8,13 @@
 #include "core/Display.h"
 #include "core/Input.h"
 #include "core/Logger.h"
+#include "core/Vfs.h"
 
 namespace {
 String sandboxRoot;
 String launchRequest;
 
 // ---------------------------------------------------------------- path safety
-
-// Paths use the same vocabulary as the FTP mounts: /sd/... is the card,
-// anything else is LittleFS.
-fs::FS& resolveFs(const String& path, String& localPath) {
-    const String prefix = String("/") + Config::FTP_MOUNT_SD;
-    if (path == prefix) {
-        localPath = "/";
-        return SD;
-    }
-    if (path.startsWith(prefix + "/")) {
-        localPath = path.substring(prefix.length());
-        return SD;
-    }
-    localPath = path;
-    return LittleFS;
-}
 
 // Rejects anything that could climb out of the sandbox. Checked before any
 // prefix comparison, because "/sd/apps/x/../../boot.lua" would otherwise pass a
@@ -91,7 +75,9 @@ int l_display_text(lua_State* L) {
     const int16_t x = luaL_checkinteger(L, 1);
     const int16_t y = luaL_checkinteger(L, 2);
     const char* text = luaL_checkstring(L, 3);
-    const uint8_t size = luaL_optinteger(L, 4, 1);
+    // Clamped: size 0 renders nothing and a negative value would wrap huge.
+    const lua_Integer rawSize = luaL_optinteger(L, 4, 1);
+    const uint8_t size = rawSize < 1 ? 1 : (rawSize > 8 ? 8 : rawSize);
     const bool invert = lua_toboolean(L, 5);
 
     Adafruit_GFX& gfx = canvas();
@@ -148,7 +134,9 @@ int l_display_show(lua_State* L) {
 // --------------------------------------------------------------------- input
 
 int l_input_read(lua_State* L) {
-    const uint32_t timeoutMs = luaL_optinteger(L, 1, 0);
+    // A negative timeout would wrap to ~49 days once cast; treat it as "poll".
+    const lua_Integer rawTimeout = luaL_optinteger(L, 1, 0);
+    const uint32_t timeoutMs = rawTimeout < 0 ? 0 : rawTimeout;
 
     // Blocks this task, not the main loop -- which is the whole point of
     // running apps off-task. It also lets the idle task run.
@@ -170,7 +158,7 @@ int l_fs_list(lua_State* L) {
     }
 
     String localPath;
-    fs::FS& fs = resolveFs(path, localPath);
+    fs::FS& fs = Vfs::resolve(path, localPath);
     const bool onSd = &fs == &SD;
 
     File dir = fs.open(localPath);
@@ -224,7 +212,7 @@ int l_fs_read(lua_State* L) {
     }
 
     String localPath;
-    fs::FS& fs = resolveFs(path, localPath);
+    fs::FS& fs = Vfs::resolve(path, localPath);
 
     File file = fs.open(localPath, "r");
     if (!file || file.isDirectory()) {
@@ -247,7 +235,7 @@ int l_fs_exists(lua_State* L) {
     }
 
     String localPath;
-    fs::FS& fs = resolveFs(path, localPath);
+    fs::FS& fs = Vfs::resolve(path, localPath);
     const bool exists = fs.exists(localPath);
     LOGD(LuaBindings::kLogTag, "fs.exists('%s') -> %s:'%s' = %d", path.c_str(),
          &fs == &SD ? "SD" : "LittleFS", localPath.c_str(), exists);
@@ -266,7 +254,7 @@ int l_fs_write(lua_State* L) {
     }
 
     String localPath;
-    fs::FS& fs = resolveFs(path, localPath);
+    fs::FS& fs = Vfs::resolve(path, localPath);
 
     File file = fs.open(localPath, "w");
     if (!file) {
@@ -290,7 +278,10 @@ int l_sys_millis(lua_State* L) {
 }
 
 int l_sys_delay(lua_State* L) {
-    const uint32_t ms = luaL_checkinteger(L, 1);
+    // Same wrap hazard as input.read: a negative delay must not become ~49
+    // days of sleep on a task the host can only stop cooperatively.
+    const lua_Integer rawMs = luaL_checkinteger(L, 1);
+    const uint32_t ms = rawMs < 0 ? 0 : rawMs;
     vTaskDelay(pdMS_TO_TICKS(ms));  // yields the task rather than spinning
     return 0;
 }

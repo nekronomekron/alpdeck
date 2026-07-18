@@ -1,4 +1,4 @@
-#include "DynamicFTPServer.h"
+#include "core/DynamicFTPServer.h"
 
 #include <ESP-FTP-Server-Lib.h>
 #include <LittleFS.h>
@@ -8,37 +8,42 @@
 #include "config/AppConfig.h"
 #include "core/Logger.h"
 
-FTPServer ftpSrv;
-
-bool DynamicFTPServer::_started = false;
+namespace {
+// Heap-allocated per init/shutdown cycle: the library has no stop(), but the
+// destructor chain (~FTPServer -> ~WiFiServer -> end()) closes the listening
+// socket and drops every connection, which is the only clean way to stop it.
+FTPServer* ftpServer = nullptr;
+}  // namespace
 
 void DynamicFTPServer::init(bool sdMounted) {
-    if (_started) {
+    if (ftpServer != nullptr) {
         return;
     }
 
-    ftpSrv.addUser(Config::FTP_USER, Config::FTP_PASSWORD);
-    ftpSrv.addFilesystem(Config::FTP_MOUNT_FLASH, &LittleFS);
+    ftpServer = new FTPServer();
+    ftpServer->addUser(Config::FTP_USER, Config::FTP_PASSWORD);
+    ftpServer->addFilesystem(Config::FTP_MOUNT_FLASH, &LittleFS);
     if (sdMounted) {
-        ftpSrv.addFilesystem(Config::FTP_MOUNT_SD, &SD);
+        ftpServer->addFilesystem(Config::FTP_MOUNT_SD, &SD);
     }
-    ftpSrv.begin();
-    _started = true;
+    ftpServer->begin();
 
-    LOGI("FTP", "Server started on %s", WiFi.localIP().toString().c_str());
+    LOGI(kLogTag, "Server started on %s", WiFi.localIP().toString().c_str());
 }
 
 void DynamicFTPServer::shutdown() {
-    if (!_started) {
+    if (ftpServer == nullptr) {
         return;
     }
 
-    delete &ftpSrv;
-    _started = false;
+    delete ftpServer;
+    ftpServer = nullptr;
+
+    LOGI(kLogTag, "Server stopped");
 }
 
 void DynamicFTPServer::loop() {
-    if (_started) {
-        ftpSrv.handle();
+    if (ftpServer != nullptr) {
+        ftpServer->handle();
     }
 }

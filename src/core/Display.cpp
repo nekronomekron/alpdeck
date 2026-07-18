@@ -1,12 +1,14 @@
-#include "Display.h"
+#include "core/Display.h"
 
 #include "config/AppConfig.h"
 #include "core/Logger.h"
 
+namespace {
 GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)>
     display(GxEPD2_DRIVER_CLASS(Config::DISPLAY_PIN_CS, Config::DISPLAY_PIN_DC,
                                 Config::DISPLAY_PIN_RST,
                                 Config::DISPLAY_PIN_BUSY));
+}  // namespace
 
 void Display::init() {
     LOGI(Display::kLogTag, "Initializing display");
@@ -29,9 +31,7 @@ void Display::init() {
 void Display::shutdown() {
     LOGI(Display::kLogTag, "Shutting down display");
 
-    drawFullWindow([](Adafruit_GFX& gfx) {
-        gfx.fillScreen(0xFFFF);  // Fill with white
-    });
+    drawFullWindow([](Adafruit_GFX& gfx) { gfx.fillScreen(kWhite); });
 
     display.powerOff();
     display.hibernate();

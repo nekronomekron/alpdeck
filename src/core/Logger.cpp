@@ -1,27 +1,36 @@
 #include "core/Logger.h"
 
-#include <HWCDC.h>
 #include <stdio.h>
-#include <string.h>
 
-HWCDC* Logger::_serial = &Serial;
+namespace {
+constexpr size_t kLogBufferSize = 256;
+
+// Serialises whole lines across tasks. Created lazily so logging before
+// begin() still works (just without the guarantee).
+SemaphoreHandle_t logMutex = nullptr;
+}  // namespace
+
+Print* Logger::_serial = &Serial;
 Logger::Level Logger::_level = Logger::Info;
-bool Logger::_serial_output_enabled = true;
+bool Logger::_serialOutputEnabled = true;
 
-constexpr size_t _kLogBufferSize = 256;
-
-void Logger::begin(HWCDC& serial, Level level) {
+void Logger::begin(Print& serial, Level level) {
     _serial = &serial;
     _level = level;
+    if (logMutex == nullptr) {
+        logMutex = xSemaphoreCreateMutex();
+    }
 }
 
 void Logger::setLevel(Level level) { _level = level; }
 
 Logger::Level Logger::level() { return _level; }
 
-void Logger::setSerialOutputEnabled(bool enabled) { _serial_output_enabled = enabled; }
+void Logger::setSerialOutputEnabled(bool enabled) {
+    _serialOutputEnabled = enabled;
+}
 
-bool Logger::serialOutputEnabled() { return _serial_output_enabled; }
+bool Logger::serialOutputEnabled() { return _serialOutputEnabled; }
 
 const char* Logger::levelName(Level level) {
     switch (level) {
@@ -45,26 +54,36 @@ void Logger::log(Level level, const char* tag, const char* fmt, ...) {
     va_end(args);
 }
 
-void Logger::vlog(Level level, const char* tag, const char* fmt, va_list args) {
-    if (level > _level) {
+void Logger::vlog(Level level, const char* tag, const char* fmt,
+                  va_list args) {
+    if (level > _level || _serial == nullptr || !_serialOutputEnabled) {
         return;
     }
 
-    char buffer[_kLogBufferSize];
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    // Compose the full line first so it leaves as one write: interleaved
+    // fragments from two tasks would otherwise shred the output.
+    char buffer[kLogBufferSize];
+    int offset = snprintf(buffer, sizeof(buffer), "[%s]%s%s%s ",
+                          levelName(level),
+                          (tag != nullptr && tag[0] != '\0') ? "[" : "",
+                          (tag != nullptr) ? tag : "",
+                          (tag != nullptr && tag[0] != '\0') ? "]" : "");
+    if (offset < 0) {
+        return;
+    }
+    // snprintf reports the untruncated length; clamp before indexing.
+    if (offset >= static_cast<int>(sizeof(buffer))) {
+        offset = sizeof(buffer) - 1;
+    }
+    vsnprintf(buffer + offset, sizeof(buffer) - offset, fmt, args);
 
-    bool print_to_serial = (_serial && _serial_output_enabled);
+    const bool locked =
+        logMutex != nullptr &&
+        xSemaphoreTake(logMutex, pdMS_TO_TICKS(50)) == pdTRUE;
 
-    if (print_to_serial) {
-        _serial->print('[');
-        _serial->print(levelName(level));
-        _serial->print(']');
-        if (tag && tag[0] != '\0') {
-            _serial->print('[');
-            _serial->print(tag);
-            _serial->print(']');
-        }
-        _serial->print(' ');
-        _serial->println(buffer);
+    _serial->println(buffer);
+
+    if (locked) {
+        xSemaphoreGive(logMutex);
     }
 }
