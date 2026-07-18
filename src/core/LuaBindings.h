@@ -16,8 +16,13 @@ class LuaWrapper;
 //           rect(x,y,w,h[,fill]) / line(x1,y1,x2,y2) / pixel(x,y)
 //           size() -> w,h
 //           show()  -- pushes the frame to the panel
-//   input.read([timeoutMs]) -> string|nil    ("cw","ccw","up","down","left",
-//                                             "right","select","select_long")
+//   input.read([timeoutMs]) -> string|nil
+//       Event names carry their source controller:
+//       rotary_cw, rotary_ccw, rotary_up, rotary_down, rotary_left,
+//       rotary_right, rotary_select, rotary_select_long,
+//       gamepad_up, gamepad_down, gamepad_left, gamepad_right,
+//       gamepad_a, gamepad_b, gamepad_x, gamepad_y,
+//       gamepad_start, gamepad_select
 //   fs.list(dir) -> {{name=,dir=,size=},...} / read(path) -> string|nil
 //         exists(path) -> bool / write(path, text) -> bool
 //   sys.millis() / delay(ms) / log(msg) / launch(path) / exit()

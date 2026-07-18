@@ -175,17 +175,29 @@ local function moveBy(delta)
     return true
 end
 
+-- Event names carry their source controller (rotary_* / gamepad_*) so apps can
+-- tell the two apart. The launcher itself accepts both, so either controller
+-- alone can drive it.
+local MOVE_DOWN = { rotary_cw = true, rotary_down = true, gamepad_down = true }
+local MOVE_UP = { rotary_ccw = true, rotary_up = true, gamepad_up = true }
+local LAUNCH = { rotary_select = true, gamepad_a = true, gamepad_start = true }
+local RESCAN = {
+    rotary_select_long = true,
+    rotary_left = true,
+    gamepad_select = true,
+}
+
 discover()
 draw()
 
 while true do
     local event = input.read(30000)
 
-    if event == "cw" or event == "down" then
+    if MOVE_DOWN[event] then
         if moveBy(1) then draw() end
-    elseif event == "ccw" or event == "up" then
+    elseif MOVE_UP[event] then
         if moveBy(-1) then draw() end
-    elseif event == "select" then
+    elseif LAUNCH[event] then
         if #apps == 0 then
             discover()
             draw()
@@ -197,7 +209,7 @@ while true do
             -- down before starting the app. Never launch from inside the loop.
             return
         end
-    elseif event == "select_long" or event == "left" then
+    elseif RESCAN[event] then
         discover()
         draw()
     end

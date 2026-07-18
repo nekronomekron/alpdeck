@@ -44,26 +44,53 @@ constexpr int16_t DISPLAY_PIN_MOSI = 11;
 // TF_CS in the LOLIN S3 PRO variant's pins_arduino.h.
 constexpr int16_t SD_PIN_CS = 46;
 
-// Adafruit ANO Rotary Navigation Encoder on the I2C STEMMA QT adapter (seesaw,
-// product 5740) using the board's default I2C pins: both are broken out on the
-// header and clear of the display and SD.
+// Input controllers sit on the I2C STEMMA QT daisy chain using the board's
+// default I2C pins: both are broken out on the header and clear of the display
+// and SD. Either controller is optional, but at least one must be present.
 constexpr int16_t I2C_PIN_SDA = 9;
 constexpr int16_t I2C_PIN_SCL = 10;
 constexpr uint32_t I2C_FREQUENCY = 400000;
 
-// The ANO adapter answers on 0x49 — not the 0x36 the plain QT encoder uses.
-constexpr uint8_t ENCODER_I2C_ADDRESS = 0x49;
-constexpr uint16_t ENCODER_PRODUCT_ID = 5740;
+// Shared button behaviour across controllers.
+constexpr uint16_t INPUT_LONG_PRESS_MS = 700;
+constexpr uint8_t INPUT_DEBOUNCE_MS = 25;
+
+// Adafruit ANO Rotary Navigation Encoder (seesaw product 5740). The ANO
+// adapter answers on 0x49 — not the 0x36 the plain QT encoder uses.
+constexpr uint8_t ROTARY_I2C_ADDRESS = 0x49;
+constexpr uint16_t ROTARY_PRODUCT_ID = 5740;
 
 // Switch pins are seesaw-side, not ESP32 GPIOs. All are active-low pull-ups.
-constexpr uint8_t ENCODER_PIN_SELECT = 1;
-constexpr uint8_t ENCODER_PIN_UP = 2;
-constexpr uint8_t ENCODER_PIN_LEFT = 3;
-constexpr uint8_t ENCODER_PIN_DOWN = 4;
-constexpr uint8_t ENCODER_PIN_RIGHT = 5;
+constexpr uint8_t ROTARY_PIN_SELECT = 1;
+constexpr uint8_t ROTARY_PIN_UP = 2;
+constexpr uint8_t ROTARY_PIN_LEFT = 3;
+constexpr uint8_t ROTARY_PIN_DOWN = 4;
+constexpr uint8_t ROTARY_PIN_RIGHT = 5;
 
-constexpr uint16_t ENCODER_LONG_PRESS_MS = 700;
-constexpr uint8_t ENCODER_DEBOUNCE_MS = 25;
+// Adafruit Mini I2C Gamepad with seesaw (product 5743). Button and joystick
+// pins are seesaw-side, from Adafruit's gamepad_qt example.
+constexpr uint8_t GAMEPAD_I2C_ADDRESS = 0x50;
+constexpr uint16_t GAMEPAD_PRODUCT_ID = 5743;
+
+constexpr uint8_t GAMEPAD_PIN_SELECT = 0;
+constexpr uint8_t GAMEPAD_PIN_B = 1;
+constexpr uint8_t GAMEPAD_PIN_Y = 2;
+constexpr uint8_t GAMEPAD_PIN_A = 5;
+constexpr uint8_t GAMEPAD_PIN_X = 6;
+constexpr uint8_t GAMEPAD_PIN_START = 16;
+
+constexpr uint8_t GAMEPAD_PIN_STICK_X = 14;
+constexpr uint8_t GAMEPAD_PIN_STICK_Y = 15;
+
+// The stick reads 0..1023 with ~512 at rest. A direction engages beyond
+// STICK_PRESS from centre and releases below STICK_RELEASE (hysteresis, so a
+// held stick cannot chatter). Orientation is per Adafruit's example (both axes
+// inverted); verify on hardware and flip the flags if a direction is mirrored.
+constexpr int16_t GAMEPAD_STICK_CENTER = 512;
+constexpr int16_t GAMEPAD_STICK_PRESS = 300;
+constexpr int16_t GAMEPAD_STICK_RELEASE = 150;
+constexpr bool GAMEPAD_STICK_INVERT_X = true;
+constexpr bool GAMEPAD_STICK_INVERT_Y = true;
 
 // Lua script run at the end of setup(), read from LittleFS. It reaches the
 // device over FTP as /flash/boot.lua, and ships in the data/ directory.

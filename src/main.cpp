@@ -14,6 +14,23 @@
 
 namespace {
 bool sdMounted = false;
+Bootscreen bootscreen;
+
+// Fatal boot error: shown on the bootscreen below the logo (warning sign plus
+// message), then the device halts. Nothing else runs -- a device that cannot
+// reach the launcher is better stopped on a readable screen than half-alive.
+[[noreturn]] void bootFail(const char* message) {
+    LOGE("Boot", "Fatal: %s", message);
+
+    Display::drawFullWindow([&](Adafruit_GFX& gfx) {
+        bootscreen.init(gfx);
+        bootscreen.drawError(gfx, message);
+    });
+
+    while (true) {
+        yield();
+    }
+}
 }  // namespace
 
 // Everything runnable is a Lua script on the host's task: boot.lua first, then
@@ -85,15 +102,15 @@ void setup() {
 
     Display::init();
 
-    Bootscreen bootscreen;
     Display::drawFullWindow([&](Adafruit_GFX& gfx) { bootscreen.init(gfx); });
 
+    // The launcher lives on LittleFS; without the mount the device can never
+    // reach anything runnable.
     if (!LittleFS.begin(true)) {
-        LOGE("FS", "LittleFS mount failed");
-    } else {
-        LOGI("FS", "LittleFS mounted (%u/%u bytes used)", LittleFS.usedBytes(),
-             LittleFS.totalBytes());
+        bootFail("flash filesystem failed");
     }
+    LOGI("FS", "LittleFS mounted (%u/%u bytes used)", LittleFS.usedBytes(),
+         LittleFS.totalBytes());
 
     // The SD card shares the display's SPI bus; Display::init() already called
     // SPI.begin() for it, and the display is hibernated by now with CS released.
@@ -117,6 +134,17 @@ void setup() {
         }
     }
 
+    // Input comes before the network: with no controller at all the device is
+    // unusable and must stop on the error screen before anything else starts.
+    // The simulator has no seesaw hardware, so it boots on without input.
+    if (!Input::init()) {
+#ifndef WOKWI_SIMULATOR
+        bootFail("no input controller found\nconnect a rotary or gamepad");
+#else
+        LOGW("Boot", "No input controller (simulator build); continuing");
+#endif
+    }
+
     // FTP only exists once there's a network to serve it on, so it is started
     // from the connect callback rather than here — that covers both a boot-time
     // auto-connect and credentials arriving later via the setup portal.
@@ -124,9 +152,9 @@ void setup() {
     Network::onDisconnected(DynamicFTPServer::shutdown);
     Network::init();
 
-    Input::init();
-
-    LuaHost::init();
+    if (!LuaHost::init()) {
+        bootFail("system error: lua host failed");
+    }
     LuaHost::onFinished(onScriptFinished);
 
     // Deliberately no Display::shutdown() here any more. It blanked the panel

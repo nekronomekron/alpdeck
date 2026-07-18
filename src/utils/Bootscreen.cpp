@@ -25,36 +25,67 @@ void Bootscreen::init(Adafruit_GFX& gfx) {
     gfx.print(buffer);
 }
 
-void Bootscreen::drawProgress(Adafruit_GFX& gfx, float progress) {
-    int16_t px, py, pw, ph;
-    progressWindow(px, py, pw, ph);
-
-    if (progress < 0.0f) {
-        progress = 0.0f;
-    }
-    if (progress > 1.0f) {
-        progress = 1.0f;
-    }
-
-    gfx.fillRect(px, py, pw, ph, _white);
-    gfx.drawRect(px, py, pw, ph, _black);
-
-    const int16_t fill = (int16_t)((pw - 4) * progress);
-    if (fill <= 0) {
+void Bootscreen::drawError(Adafruit_GFX& gfx, const char* message) {
+    if (message == nullptr || message[0] == '\0') {
         return;
     }
 
-    gfx.fillRect(px + 2, py + 2, fill, ph - 4, _black);
+    // Split on at most one '\n' into two lines.
+    char buffer[96];
+    strncpy(buffer, message, sizeof(buffer) - 1);
+    buffer[sizeof(buffer) - 1] = '\0';
 
-    // Checkerboard dither on the leading edge of the bar.
-    const int16_t dw = (8 < pw - 4 - fill) ? 8 : pw - 4 - fill;
-    for (int16_t yy = py + 2; yy < py + ph - 2; yy++) {
-        for (int16_t xx = px + 2 + fill; xx < px + 2 + fill + dw; xx++) {
-            if (((xx + yy) & 1) == 0) {
-                gfx.drawPixel(xx, yy, _black);
-            }
-        }
+    char* line1 = buffer;
+    char* line2 = strchr(buffer, '\n');
+    if (line2 != nullptr) {
+        *line2 = '\0';
+        line2++;
     }
+
+    constexpr int16_t kSignW = 30;
+    constexpr int16_t kGap = 12;
+
+    // Centre sign + text as one block in the area the logo leaves free.
+    size_t longest = strlen(line1);
+    if (line2 != nullptr && strlen(line2) > longest) {
+        longest = strlen(line2);
+    }
+    const int16_t textW = (int16_t)(6 * longest);
+
+    int16_t left = cx() - (kSignW + kGap + textW) / 2;
+    if (left < 4) {
+        left = 4;
+    }
+
+    const int16_t top = base() + 76;
+    drawWarningSign(gfx, left, top);
+
+    gfx.setTextSize(1);
+    gfx.setTextColor(_black);
+    const int16_t textX = left + kSignW + kGap;
+    if (line2 != nullptr) {
+        gfx.setCursor(textX, top + 4);
+        gfx.print(line1);
+        gfx.setCursor(textX, top + 16);
+        gfx.print(line2);
+    } else {
+        gfx.setCursor(textX, top + 10);  // vertically centred on the sign
+        gfx.print(line1);
+    }
+}
+
+void Bootscreen::drawWarningSign(Adafruit_GFX& gfx, int16_t x, int16_t y) {
+    constexpr int16_t kW = 30;
+    constexpr int16_t kH = 26;
+    gfx.fillTriangle(x + kW / 2, y, x, y + kH - 1, x + kW - 1, y + kH - 1,
+                     _black);
+
+    // The '!' ink is a narrow centred column, so it stays inside the triangle
+    // even near the apex. White on the filled sign.
+    gfx.setTextSize(2);
+    gfx.setTextColor(_white);
+    gfx.setCursor(x + kW / 2 - 5, y + 9);
+    gfx.print('!');
 }
 
 void Bootscreen::drawLogo(Adafruit_GFX& gfx) {

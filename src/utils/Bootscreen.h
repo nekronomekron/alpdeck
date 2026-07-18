@@ -10,14 +10,10 @@ public:
 
     void init(Adafruit_GFX& gfx);
 
-    void drawProgress(Adafruit_GFX& gfx, float progress);
-
-    void progressWindow(int16_t& x, int16_t& y, int16_t& w, int16_t& h) const {
-        w = 140;
-        h = 10;
-        x = cx() - w / 2;
-        y = base() + 84;
-    }
+    // Renders a fatal boot error below the logo: a warning triangle with an
+    // exclamation mark, the message to its right. The message may contain one
+    // '\n' for a second line.
+    void drawError(Adafruit_GFX& gfx, const char* message);
 
 private:
     int16_t _w, _h;
@@ -27,6 +23,7 @@ private:
     int16_t base() const { return (int16_t)((int32_t)_h * 38 / 100); }
 
     void drawLogo(Adafruit_GFX& gfx);
+    void drawWarningSign(Adafruit_GFX& gfx, int16_t x, int16_t y);
 
     void textCentered(Adafruit_GFX& gfx, const char* s, int16_t xc, int16_t y,
                       uint8_t size);

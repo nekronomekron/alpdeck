@@ -21,13 +21,15 @@ String activePath;
 
 std::function<void(const LuaHost::Finished&)> LuaHost::_onFinished;
 
-void LuaHost::init() {
+bool LuaHost::init() {
     lock = xSemaphoreCreateMutex();
     results = xQueueCreate(4, sizeof(Finished*));
 
     if (lock == nullptr || results == nullptr) {
         LOGE(kLogTag, "Could not allocate host primitives");
+        return false;
     }
+    return true;
 }
 
 bool LuaHost::readScript(const String& path, String& source) {

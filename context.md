@@ -1,6 +1,6 @@
 # alpdeck — Projektkontext
 
-Stand: 2026-07-17. Handoff-/Kontextdokument für die Weiterarbeit.
+Stand: 2026-07-18. Handoff-/Kontextdokument für die Weiterarbeit.
 
 ## Überblick
 
@@ -14,8 +14,13 @@ Lua-Lebenszyklus), Lua ist die App-Nutzlast.
 - **Board:** LOLIN S3 PRO (ESP32-S3, 16 MB Flash, PSRAM).
 - **Display:** GDEY042T81, 4.2" E-Paper, 400×300, 1-Bit (GxEPD2). Ein einziger
   Framebuffer (15000 Byte, eine Page). Partial-Refresh ~400 ms, Full ~1200 ms.
-- **Eingabe:** Adafruit ANO Rotary Navigation Encoder über I2C STEMMA QT
-  (seesaw, Produkt **5740**, I2C-Adresse **0x49**). 5-Wege-Switch + Drehrad.
+- **Eingabe:** zwei Controller im I2C-STEMMA-QT-Daisy-Chain, beide optional,
+  **mindestens einer muss vorhanden sein** (sonst Boot-Fehler + Halt):
+  - Adafruit ANO Rotary Navigation Encoder (seesaw, Produkt **5740**, I2C
+    **0x49**): 5-Wege-Switch + Drehrad. Events `rotary_*`.
+  - Adafruit Mini I2C Gamepad with seesaw (Produkt **5743**, I2C **0x50**):
+    6 Buttons (A/B/X/Y/Start/Select) + Analog-Stick (als Richtungs-Events
+    digitalisiert, Hysterese). Events `gamepad_*`.
 - **SD-Karte:** teilt den SPI-Bus mit dem Display.
 
 Pin-Quelle ist die Board-Variante `pins_arduino.h` (nicht raten):
@@ -24,6 +29,9 @@ Pin-Quelle ist die Board-Variante `pins_arduino.h` (nicht raten):
 - I2C: SDA=9, SCL=10 (Default der Variante, frei und am Header herausgeführt).
 - ANO-Switches sind **seesaw-seitige** Pins, keine ESP32-GPIOs:
   SELECT=1, UP=2, LEFT=3, DOWN=4, RIGHT=5 (active-low, Pull-up).
+- Gamepad-Pins (seesaw-seitig, aus Adafruits gamepad_qt-Beispiel):
+  SELECT=0, B=1, Y=2, A=5, X=6, START=16; Stick analog X=14, Y=15
+  (0–1023, Mitte ~512).
 
 Alle Pins in `src/config/AppConfig.h`.
 
@@ -33,11 +41,19 @@ Alle Pins in `src/config/AppConfig.h`.
 1. Serial/Logger.
 2. `Display::init()` + Bootscreen (bleibt stehen bis der Launcher das erste
    Frame zeichnet — es gibt **kein** `Display::shutdown()` mehr vor den Skripten).
-3. LittleFS mounten (`formatOnFail=true`), dann SD (nach Display, da gemeinsamer
-   SPI-Bus). SD-Root wird bei LOG_LEVEL 3 geloggt.
-4. Netzwerk (nicht-blockierend), FTP startet per Connect-Callback.
-5. `Input::init()`, `LuaHost::init()`.
-6. `boot.lua` läuft (User-Hook). Danach der Launcher, dann die gewählte App.
+3. LittleFS mounten (`formatOnFail=true`; **fatal** bei Fehlschlag), dann SD
+   (nach Display, da gemeinsamer SPI-Bus; optional, nur Warnung). SD-Root wird
+   bei LOG_LEVEL 3 geloggt.
+4. `Input::init()` — **fatal**, wenn kein Controller gefunden wird
+   (Wokwi-Build: nur Warnung, der Simulator hat keine seesaw-Hardware).
+5. Netzwerk (nicht-blockierend), FTP startet per Connect-Callback.
+6. `LuaHost::init()` (**fatal** bei Allokationsfehler).
+7. `boot.lua` läuft (User-Hook). Danach der Launcher, dann die gewählte App.
+
+**Fatal-Pfad:** `bootFail(msg)` in main.cpp — loggt, zeichnet den Bootscreen
+neu mit `Bootscreen::drawError()` (Warndreieck mit „!" links neben dem
+Fehlertext, unter dem Logo, `\n` erlaubt eine zweite Zeile) und hält das Gerät
+in einer yield-Schleife an. Die Progress-Bar-API des Bootscreens ist entfernt.
 
 `loop()`: `Network::loop()`, `DynamicFTPServer::loop()`, `Input::poll()`,
 `LuaHost::loop()`.
@@ -48,6 +64,13 @@ Alle Pins in `src/config/AppConfig.h`.
   `endFrame`) für die Lua-Bindings, weil Lua aus dem Paged-Loop heraus bei einem
   Fehler per longjmp durch C++-Destruktoren springen könnte. Nur sicher, weil
   das Panel in **eine** Page passt.
+- **Vfs** — gemeinsame Pfadauflösung (`Vfs::resolve`): `/sd/...` → SD-Karte,
+  alles andere → LittleFS. Einzige Stelle für dieses Mapping; LuaHost und
+  LuaBindings nutzen sie (war vorher dupliziert).
+- **Logger** (+ `utils/JsonUtil.h`) — thread-sicher: Zeilen werden in einen
+  Puffer komponiert und unter Mutex als eine Ausgabe geschrieben, weil Main-Loop
+  und Lua-Task gleichzeitig loggen. Interface nimmt `Print&`. `jsonEscape()`
+  liegt in `utils/JsonUtil.h` (genutzt von Portal und Network).
 - **Network** — nicht-blockierende WiFi-State-Machine. Credentials in
   `Preferences` (NVS). Ohne Credentials → Captive Portal. `WiFi.begin()` kehrt
   sofort zurück, `loop()` pollt (kein Blockieren in `setup()`).
@@ -56,10 +79,19 @@ Alle Pins in `src/config/AppConfig.h`.
   SSIDs serverseitig (stärkstes BSSID pro Name), Passwortfeld deaktiviert bei
   offenen Netzen.
 - **DynamicFTPServer** — LittleFS als `/flash`, SD als `/sd` (kastenklicker/
-  ESP-FTP-Server, Multi-Mount). Startet nur bei WiFi-Verbindung.
-- **Input** — ANO-Encoder. `poll()` besitzt I2C exklusiv auf dem Main-Loop und
-  publiziert Events in eine FreeRTOS-Queue; Lua-Task konsumiert per `read()`.
-  Bus wird nie aus zwei Tasks berührt.
+  ESP-FTP-Server, Multi-Mount). Startet nur bei WiFi-Verbindung. Lebenszyklus
+  per `new`/`delete` pro Verbindungszyklus: die Lib hat kein `stop()`, aber
+  `~FTPServer` → `~WiFiServer` → `end()` schließt den Socket sauber (das
+  frühere `delete &globalObjekt` war UB und crashte beim ersten Disconnect).
+- **Input** — Fassade über die Controller-Treiber **RotaryController** (5740)
+  und **GamepadController** (5743, Buttons + Stick-Digitalisierung mit
+  Hysterese); **SeesawButtons** ist der geteilte Entprell-/Long-Press-Helfer.
+  `init()` probt beide, true bei ≥ 1. `poll()` besitzt I2C exklusiv auf dem
+  Main-Loop und publiziert Events in eine FreeRTOS-Queue; Lua-Task konsumiert
+  per `read()`. Bus wird nie aus zwei Tasks berührt. Event-Namen tragen die
+  Quelle (`rotary_up` vs. `gamepad_up`) — Kontrakt für 2-Spieler-Apps. Tasten
+  ohne Long-Press feuern beim **Drücken** (Latenz); nur `rotary_select` beim
+  Loslassen (Long-Press-Disambiguierung).
 - **LuaHost** — Task-Supervisor. Genau **ein** `lua_State`/Task gleichzeitig.
   App fordert nächste App per `sys.launch(path)` an und *returnt*; der Host baut
   den State ab und startet dann die nächste. Ein Crash landet wieder beim
@@ -140,34 +172,81 @@ brauchen immer separat `uploadfs`. Nach einem Flash-Erase ist LittleFS leer.
 
 ## Aktueller Stand
 
+**Auf Hardware verifiziert (2026-07-18):**
+- **Der LUA_32BITS-Fix funktioniert: der Launcher läuft auf dem Gerät und
+  zeigt die Hello-App in der Liste an.** Damit sind Display, LittleFS,
+  SD-Mount, Lua-Host, App-Discovery und das Launcher-Rendering end-to-end am
+  Gerät bestätigt.
+
 **Gebaut und off-device verifiziert:**
-- Display, LittleFS, SD-Mount laufen (per Serial-Log bestätigt).
 - Netzwerk + Captive Portal (UI im Browser gerendert/getestet).
 - FTP mit /flash + /sd.
-- Launcher-Logik, App-Discovery, invertierte Selektion, Blank-Screen-Fix.
-- Lua-Integer-ABI-Fix (`LUA_32BITS`), Build grün, static_assert hält.
+- Robustheits-/Konsistenz-Refactoring (2026-07-17, siehe unten); beide
+  Environments (`Alpdeck`, `Alpdeck-Wokwi`) bauen grün.
 
-**Zuletzt behobene Bugs (chronologisch):**
+**Input-Umbau (2026-07-18, Build-verifiziert):**
+- Zwei-Controller-Support (Rotary 0x49 + Gamepad 0x50, Daisy-Chain, beide
+  optional, mindestens einer Pflicht). Neue Module: `SeesawButtons` (geteiltes
+  Entprellen/Long-Press), `RotaryController`, `GamepadController`; `Input` ist
+  Fassade mit `hasRotary()`/`hasGamepad()`.
+- **Breaking Change im Lua-Kontrakt:** Event-Namen tragen jetzt die Quelle
+  (`rotary_cw`, `gamepad_a`, …). launcher.lua, hello-App und der
+  API-Kommentar in LuaBindings.h sind angepasst (Lookup-Tabellen statt
+  if-Ketten).
+- Bootscreen: Progress-API entfernt; `drawError()` (Warndreieck + Text unter
+  dem Logo). main.cpp: `bootFail()`-Fatal-Pfad (LittleFS-Mount, kein
+  Controller, LuaHost-Init) mit hartem Halt.
+
+**Refactoring-Pass über src/ (2026-07-17):**
+- **Bugfix FTP-Shutdown:** `delete &ftpSrv` auf globalem Objekt (UB, Crash beim
+  ersten WiFi-Disconnect) → Heap-Lebenszyklus `new`/`delete` in
+  DynamicFTPServer.
+- **Bugfix Wokwi-Logspam:** Connect-Timeout ohne Portal ließ den State auf
+  `Connecting` und loggte „Connect timed out" jeden Loop-Durchlauf → Timer-Reset
+  und stiller Retry.
+- **Bugfix uint32-Wraparound:** `input.read(-1)`/`sys.delay(-1)` wurden zu ~49
+  Tagen Blockade → negative Werte geclampt; `display.text`-Größe geclampt
+  (1..8).
+- **Bugfix Phantom-Input:** fehlgeschlagener I2C-Read (liefert Nullen) hätte
+  active-low als „alle 5 Tasten gedrückt" dekodiert → Sample wird als
+  Bus-Glitch verworfen.
+- **Härtung:** LuaHost verweigert `run()` bei fehlgeschlagener
+  Queue/Mutex-Allokation; `readScript()` prüft auf vollständigen Read (SD-Fehler
+  erschien sonst als kryptischer Lua-Syntaxfehler); Logger thread-sicher
+  (Mutex + Einzelausgabe); `Network::statusJson()` escaped SSIDs.
+- **Struktur:** neues `core/Vfs` (dedupliziertes `resolveFs`), neues
+  `utils/JsonUtil.h` (geteiltes `jsonEscape`), einheitliche Includes
+  (`"core/X.h"`), Dateiglobale in anonymen Namespaces, Braces/Naming
+  vereinheitlicht, toter Code entfernt.
+
+**Zuvor behobene Bugs (chronologisch):**
 - boot.lua unsichtbar über FTP → falscher STORAGE_TYPE / uploadfs nötig.
 - Display-Pin-GPIO-Warnungen (kosmetisch, gefixt).
 - Portal-Crash → Loop-Stack + nicht-blockierendes Portal (WiFiManager ersetzt).
 - Launcher: `math` nil → `luaL_requiref` statt bare `luaopen_*`.
 - Launcher: Blank-Screen (`show(full)` rendert leeres Frame) + Selektion
   schwarz-auf-schwarz (invert-Flag).
-- **Launcher: keine Apps gefunden → Lua-Integer-ABI-Mismatch (LUA_32BITS).**
+- Launcher: keine Apps gefunden → Lua-Integer-ABI-Mismatch (LUA_32BITS) —
+  **am Gerät bestätigt behoben.**
 
 ## Offene Punkte
 
-1. **Encoder wird nicht erkannt:** `[WARN][Input] No encoder at 0x49`. Nächster
-   Blocker für echte Navigation. Prüfen: I2C-Verkabelung (SDA=9, SCL=10, 3V3,
-   GND), STEMMA-Adresse. `Input::init()` prüft die Produkt-ID (5740) zur Laufzeit
-   und degradiert sauber statt zu hängen.
-2. **Nichts davon lief je auf Hardware verifiziert** über den Boot-Log hinaus.
-   Der aktuelle Fix (LUA_32BITS) ist logisch wasserdicht, aber noch nicht am
-   Gerät bestätigt — erwartet beim nächsten Boot `discover: 1 app(s) found` und
-   "Hello" in der Liste.
-3. **32-Bit-Integer/Float in Lua** (durch LUA_32BITS) — für Launcher/Apps
+1. **Encoder wird nicht erkannt:** zuletzt `[WARN][Input] No encoder at 0x49`.
+   Prüfen: I2C-Verkabelung (SDA=9, SCL=10, 3V3, GND), STEMMA-Adresse. Die
+   Treiber prüfen die Produkt-ID zur Laufzeit und degradieren sauber. **Achtung:
+   ohne irgendeinen Controller stoppt der Boot jetzt absichtlich im
+   Fehler-Screen.**
+2. **Input-Umbau (2 Controller, rotary_*/gamepad_*-Events) lief noch nicht auf
+   Hardware.** Zu verifizieren: Gamepad-Erkennung an 0x50,
+   Joystick-Achsen-Orientierung (`GAMEPAD_STICK_INVERT_X/Y` in AppConfig ggf.
+   drehen), Schwellen (`GAMEPAD_STICK_PRESS/RELEASE`), Fehler-Screen ohne
+   Controller. launcher.lua/hello-App brauchen `uploadfs` bzw. SD-Update, da
+   die alten Event-Namen (`cw`, `up`, …) nicht mehr gesendet werden.
+3. **Refactoring-Pass lief noch nicht auf Hardware** (nur Build-verifiziert).
+   Besonders der neue FTP-Lebenszyklus (Disconnect → Shutdown → Reconnect)
+   ist am Gerät noch ungetestet.
+4. **32-Bit-Integer/Float in Lua** (durch LUA_32BITS) — für Launcher/Apps
    ausreichend, aber ein bewusster Trade-off gegenüber 64-Bit/double.
-4. Alte committete WiFi-Credentials (`IoT`/`05021904`) liegen noch in der
+5. Alte committete WiFi-Credentials (`IoT`/`05021904`) liegen noch in der
    Git-History (Commit fc1434d) — bei öffentlichem Repo rotieren.
-5. Kein `require` (Single-File-Apps) — relevant, falls Apps größer werden.
+6. Kein `require` (Single-File-Apps) — relevant, falls Apps größer werden.

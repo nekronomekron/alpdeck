@@ -28,7 +28,9 @@ public:
         String message;  // traceback when exit == Failed
     };
 
-    static void init();
+    // Allocates the host primitives. Returns false when allocation fails, in
+    // which case no script will ever run and the boot should not continue.
+    static bool init();
 
     // Starts a script. Returns false when one is already running, the file is
     // missing, or the task could not be created. Non-blocking: the outcome of
