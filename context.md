@@ -192,6 +192,15 @@ brauchen immer separat `uploadfs`. Nach einem Flash-Erase ist LittleFS leer.
 **Gebaut und off-device verifiziert:**
 - Netzwerk + Captive Portal (UI im Browser gerendert/getestet).
 - FTP mit /flash + /sd.
+- Launcher-UI (2026-07-18): Navbar mit Name + Versionsnummer (aus
+  `sys.info().version`; ein Berg-Icon war kurz drin und wurde wieder entfernt),
+  rechts WLAN-Symbol (4 Balken nach RSSI; offline = hohl + Strich) und
+  Hamburger-Icon als Platzhalter für ein späteres Optionsmenü. App-Liste
+  darunter mit Scrollbar am rechten Rand (Thumb folgt dem Scroll-Fenster),
+  nur sichtbar wenn mehr Apps als Zeilen. input.read-Timeout (30 s) löst einen
+  Redraw aus, damit das WLAN-Symbol aktuell bleibt. Off-device per
+  lupa-Stub-Harness verifiziert (Scratchpad `launcher_check.py`; lupa ist in
+  PlatformIOs penv-Python installiert).
 - Robustheits-/Konsistenz-Refactoring (2026-07-17, siehe unten); beide
   Environments (`Alpdeck`, `Alpdeck-Wokwi`) bauen grün.
 

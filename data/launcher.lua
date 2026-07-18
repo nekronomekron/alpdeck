@@ -14,11 +14,14 @@ local ENTRY = "main.lua"
 local MANIFEST = "app.lua"
 
 local ROW_HEIGHT = 22
-local LIST_TOP = 74
+local NAV_HEIGHT = 40  -- navbar, closed by a full-width 2px rule
+local LIST_TOP = NAV_HEIGHT + 14
 local MARGIN = 12
 
 local W, H = display.size()
-local VISIBLE = math.floor((H - LIST_TOP - 18) / ROW_HEIGHT)
+local VISIBLE = math.floor((H - LIST_TOP - 6) / ROW_HEIGHT)
+
+local VERSION = "v" .. (sys.info().version or "?")
 
 -- Ghosting builds up over partial refreshes; clear it periodically.
 local FULL_REFRESH_EVERY = 8
@@ -87,10 +90,62 @@ local function discover()
     end)
 end
 
-local function drawHeader()
-    display.text(MARGIN, 18, "alpdeck", 3)
-    display.text(MARGIN, 46, "apps | games | tools", 1)
-    display.rect(MARGIN, 60, W - 2 * MARGIN, 2, true)
+-- Four ascending signal bars, 18px wide in total. Filled count follows the
+-- RSSI; offline draws all bars hollow with a strike-through.
+local function drawWifiIcon(x, baseline)
+    local wifi = sys.wifi()
+    local bars = 0
+    if wifi.connected then
+        local rssi = wifi.rssi or -100
+        bars = (rssi >= -55 and 4) or (rssi >= -65 and 3)
+            or (rssi >= -75 and 2) or 1
+    end
+
+    for i = 1, 4 do
+        local h = 4 + (i - 1) * 3
+        display.rect(x + (i - 1) * 5, baseline - h, 3, h, i <= bars)
+    end
+
+    if bars == 0 then
+        display.line(x - 1, baseline, x + 18, baseline - 14)
+    end
+end
+
+-- Hamburger placeholder for the options menu (menu itself comes later).
+local function drawMenuIcon(x, y)
+    for i = 0, 2 do
+        display.rect(x, y + i * 5, 16, 2, true)
+    end
+end
+
+local function drawNavbar()
+    display.text(MARGIN, 10, "alpdeck", 3)
+    display.text(MARGIN + 7 * 18 + 6, 24, VERSION, 1)
+
+    local menuX = W - MARGIN - 16
+    drawMenuIcon(menuX, 14)
+    drawWifiIcon(menuX - 10 - 18, 28)
+
+    display.rect(0, NAV_HEIGHT, W, 2, true)
+end
+
+-- Right-edge scrollbar, only when the list does not fit the screen. The thumb
+-- tracks the scroll window, not the selection.
+local function drawScrollbar()
+    if #apps <= VISIBLE then
+        return
+    end
+
+    local x = W - 8
+    local trackY = LIST_TOP
+    local trackH = H - 8 - trackY
+    display.rect(x, trackY, 4, trackH)
+
+    local thumbH = math.max(10, math.floor(trackH * VISIBLE / #apps))
+    local maxTop = #apps - VISIBLE
+    local thumbY = trackY
+        + math.floor((trackH - thumbH) * (top - 1) / maxTop)
+    display.rect(x, thumbY, 4, thumbH, true)
 end
 
 local function drawEmpty()
@@ -127,7 +182,7 @@ local function draw()
     local full = refreshes % FULL_REFRESH_EVERY == 1
 
     display.clear(full)
-    drawHeader()
+    drawNavbar()
 
     if #apps == 0 then
         drawEmpty()
@@ -140,10 +195,7 @@ local function draw()
             end
         end
 
-        if #apps > VISIBLE then
-            display.text(W - MARGIN - 40, H - 14,
-                string.format("%d/%d", selected, #apps), 1)
-        end
+        drawScrollbar()
     end
 
     display.show()
@@ -193,7 +245,10 @@ draw()
 while true do
     local event = input.read(30000)
 
-    if MOVE_DOWN[event] then
+    if event == nil then
+        -- Timeout: redraw so the wifi indicator tracks reality.
+        draw()
+    elseif MOVE_DOWN[event] then
         if moveBy(1) then draw() end
     elseif MOVE_UP[event] then
         if moveBy(-1) then draw() end
