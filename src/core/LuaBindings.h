@@ -27,6 +27,12 @@ class LuaWrapper;
 //         exists(path) -> bool / write(path, text) -> bool
 //   sys.millis() / delay(ms) / log(msg) / launch(path) / exit()
 //         memory() -> luaBytes, freeHeapBytes
+//         temperature() -> degrees C (die temperature, internal sensor)
+//         info() -> {chip, revision, cores, cpu_mhz, flash_bytes,
+//                    psram_bytes, psram_free_bytes, heap_bytes,
+//                    heap_free_bytes, heap_min_free_bytes, uptime_ms,
+//                    reset_reason, version}
+//         wifi() -> {connected[, ssid, ip, rssi]}
 //
 // The base library is opened without io, os or package, so fs.* is the only
 // route to storage and every path passes through the sandbox check here.

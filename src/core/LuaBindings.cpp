@@ -2,12 +2,15 @@
 
 #include <LuaWrapper.h>
 #include <SD.h>
+#include <WiFi.h>
 #include <esp_heap_caps.h>
+#include <esp_system.h>
 
 #include "config/AppConfig.h"
 #include "core/Display.h"
 #include "core/Input.h"
 #include "core/Logger.h"
+#include "core/Network.h"
 #include "core/Vfs.h"
 
 namespace {
@@ -314,6 +317,99 @@ int l_sys_memory(lua_State* L) {
     return 2;
 }
 
+// temperature() -> degrees Celsius from the ESP32-S3's internal sensor. Reads
+// the die, not the room: expect several degrees above ambient under load.
+int l_sys_temperature(lua_State* L) {
+    lua_pushnumber(L, temperatureRead());
+    return 1;
+}
+
+const char* resetReasonName() {
+    switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:
+        return "poweron";
+    case ESP_RST_EXT:
+        return "external";
+    case ESP_RST_SW:
+        return "software";
+    case ESP_RST_PANIC:
+        return "panic";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:
+        return "watchdog";
+    case ESP_RST_DEEPSLEEP:
+        return "deepsleep";
+    case ESP_RST_BROWNOUT:
+        return "brownout";  // supply dipped: bad cable, empty battery
+    case ESP_RST_SDIO:
+        return "sdio";
+    default:
+        return "unknown";
+    }
+}
+
+// info() -> table of chip and firmware facts. reset_reason is the power-supply
+// diagnostic: "brownout" means the supply sagged on the previous run.
+int l_sys_info(lua_State* L) {
+    lua_newtable(L);
+
+    lua_pushstring(L, ESP.getChipModel());
+    lua_setfield(L, -2, "chip");
+    lua_pushinteger(L, ESP.getChipRevision());
+    lua_setfield(L, -2, "revision");
+    lua_pushinteger(L, ESP.getChipCores());
+    lua_setfield(L, -2, "cores");
+    lua_pushinteger(L, ESP.getCpuFreqMHz());
+    lua_setfield(L, -2, "cpu_mhz");
+
+    lua_pushinteger(L, (lua_Integer)ESP.getFlashChipSize());
+    lua_setfield(L, -2, "flash_bytes");
+    lua_pushinteger(L, (lua_Integer)ESP.getPsramSize());
+    lua_setfield(L, -2, "psram_bytes");
+    lua_pushinteger(L, (lua_Integer)ESP.getFreePsram());
+    lua_setfield(L, -2, "psram_free_bytes");
+    lua_pushinteger(L, (lua_Integer)ESP.getHeapSize());
+    lua_setfield(L, -2, "heap_bytes");
+    lua_pushinteger(L, (lua_Integer)ESP.getFreeHeap());
+    lua_setfield(L, -2, "heap_free_bytes");
+    lua_pushinteger(L, (lua_Integer)ESP.getMinFreeHeap());
+    lua_setfield(L, -2, "heap_min_free_bytes");
+
+    lua_pushinteger(L, (lua_Integer)millis());
+    lua_setfield(L, -2, "uptime_ms");
+    lua_pushstring(L, resetReasonName());
+    lua_setfield(L, -2, "reset_reason");
+
+    char version[16];
+    snprintf(version, sizeof(version), "%u.%u", Config::APP_VERSION_MAJOR,
+             Config::APP_VERSION_MINOR);
+    lua_pushstring(L, version);
+    lua_setfield(L, -2, "version");
+
+    return 1;
+}
+
+// wifi() -> table {connected[, ssid, ip, rssi]}. Read-only status; managing
+// the connection stays with the kernel (portal), not with apps.
+int l_sys_wifi(lua_State* L) {
+    const bool connected = Network::isConnected();
+
+    lua_newtable(L);
+    lua_pushboolean(L, connected);
+    lua_setfield(L, -2, "connected");
+
+    if (connected) {
+        lua_pushstring(L, WiFi.SSID().c_str());
+        lua_setfield(L, -2, "ssid");
+        lua_pushstring(L, WiFi.localIP().toString().c_str());
+        lua_setfield(L, -2, "ip");
+        lua_pushinteger(L, WiFi.RSSI());
+        lua_setfield(L, -2, "rssi");
+    }
+    return 1;
+}
+
 // ------------------------------------------------------------- registration
 
 void installTable(lua_State* L, const char* name, const luaL_Reg* functions) {
@@ -344,6 +440,8 @@ const luaL_Reg kSys[] = {
     {"millis", l_sys_millis}, {"delay", l_sys_delay},
     {"log", l_sys_log},       {"launch", l_sys_launch},
     {"exit", l_sys_exit},     {"memory", l_sys_memory},
+    {"temperature", l_sys_temperature},
+    {"info", l_sys_info},     {"wifi", l_sys_wifi},
     {nullptr, nullptr},
 };
 }  // namespace

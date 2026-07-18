@@ -40,7 +40,9 @@ void startLauncher() {
     LuaBindings::setSandboxRoot("");
 
     if (!LuaHost::run(Config::LAUNCHER_PATH)) {
-        LOGE("Boot", "Launcher %s could not start", Config::LAUNCHER_PATH);
+        // Without a launcher there is nothing to operate. A fresh flash where
+        // the filesystem image was never uploaded lands here.
+        bootFail("launcher not found\nflash the filesystem (uploadfs)");
     }
 }
 

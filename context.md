@@ -52,8 +52,13 @@ Alle Pins in `src/config/AppConfig.h`.
 
 **Fatal-Pfad:** `bootFail(msg)` in main.cpp — loggt, zeichnet den Bootscreen
 neu mit `Bootscreen::drawError()` (Warndreieck mit „!" links neben dem
-Fehlertext, unter dem Logo, `\n` erlaubt eine zweite Zeile) und hält das Gerät
-in einer yield-Schleife an. Die Progress-Bar-API des Bootscreens ist entfernt.
+Fehlertext in einem 1px-Rahmen, vertikal zentriert zwischen Untertitel und
+Versionszeile, `\n` erlaubt eine zweite Zeile) und hält das Gerät in einer
+yield-Schleife an. Fatal sind: LittleFS-Mount, kein Input-Controller,
+LuaHost-Allokation, **Launcher startet nicht** (z. B. uploadfs nie geflasht).
+Bewusst *nicht* fatal: SD/Netzwerk (Gerät bleibt nutzbar) und ein zur Laufzeit
+*gecrashter* Launcher — dort läuft FTP weiter als Reparaturweg. Die
+Progress-Bar-API des Bootscreens ist entfernt.
 
 `loop()`: `Network::loop()`, `DynamicFTPServer::loop()`, `Input::poll()`,
 `LuaHost::loop()`.
@@ -98,7 +103,13 @@ in einer yield-Schleife an. Die Progress-Bar-API des Bootscreens ist entfernt.
   Launcher.
 - **LuaBindings** — die öffentliche API für Apps: `display`, `input`, `fs`
   (pfad-sandboxed), `sys`. Basis-Lib ohne `io`/`os`/`package`, also kein
-  `require` → eine App = eine Datei.
+  `require` → eine App = eine Datei. `sys` umfasst neben
+  millis/delay/log/launch/exit/memory auch: `temperature()` (Die-Sensor),
+  `info()` (Chip, RAM/PSRAM, Flash, Uptime, `reset_reason` inkl. "brownout"
+  als Versorgungs-Diagnose, Firmware-Version) und `wifi()`
+  (connected/ssid/ip/rssi, read-only). Bewusst **kein** `sys.battery()`: der
+  S3 PRO führt VBAT und den Charger-Status auf keinen GPIO; ohne externen
+  Spannungsteiler (wird nicht verbaut) ist die Batterie nicht messbar.
 - **LuaWrapper** (lib/luawrapper) — pro Launch instanziiert. PSRAM-Allokator,
   Traceback-Handler, kooperativer Cancel-Hook (`lua_sethook`, **nie**
   `vTaskDelete` — würde den SPI-Mutex stranden), `lua_atpanic` (sonst rebootet

@@ -43,7 +43,10 @@ void Bootscreen::drawError(Adafruit_GFX& gfx, const char* message) {
     }
 
     constexpr int16_t kSignW = 30;
+    constexpr int16_t kSignH = 26;
     constexpr int16_t kGap = 12;
+    constexpr int16_t kPadX = 10;  // border padding around sign + text
+    constexpr int16_t kPadY = 8;
 
     // Centre sign + text as one block in the area the logo leaves free.
     size_t longest = strlen(line1);
@@ -51,13 +54,23 @@ void Bootscreen::drawError(Adafruit_GFX& gfx, const char* message) {
         longest = strlen(line2);
     }
     const int16_t textW = (int16_t)(6 * longest);
+    const int16_t blockW = kSignW + kGap + textW;
+    const int16_t blockH = kSignH + 2 * kPadY;
 
-    int16_t left = cx() - (kSignW + kGap + textW) / 2;
-    if (left < 4) {
-        left = 4;
+    int16_t left = cx() - blockW / 2;
+    if (left < kPadX + 2) {
+        left = kPadX + 2;
     }
 
-    const int16_t top = base() + 76;
+    // Centre the block vertically in the free band between the subtitle
+    // (base()+62, size-1 text, ~8px tall) and the version line at _h-12.
+    const int16_t bandTop = base() + 70;
+    const int16_t bandBottom = _h - 12;
+    const int16_t borderTop = bandTop + (bandBottom - bandTop - blockH) / 2;
+    const int16_t top = borderTop + kPadY;
+
+    gfx.drawRect(left - kPadX, borderTop, blockW + 2 * kPadX, blockH, _black);
+
     drawWarningSign(gfx, left, top);
 
     gfx.setTextSize(1);
