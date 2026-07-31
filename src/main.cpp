@@ -10,11 +10,45 @@
 #include "core/LuaBindings.h"
 #include "core/LuaHost.h"
 #include "core/Network.h"
+#include "driver/rtc_io.h"
 #include "utils/Bootscreen.h"
 
 namespace {
 bool sdMounted = false;
 Bootscreen bootscreen;
+
+static bool pressed() { return digitalRead(Config::STANDBY_PIN) == 0; }
+
+static void waitForRelease() {
+    uint32_t stable = millis();
+    while (millis() - stable < 50) {
+        if (pressed())
+            stable = millis();
+        delay(5);
+    }
+}
+
+static bool heldFor(uint32_t ms) {
+    uint32_t t0 = millis();
+    while (millis() - t0 < ms) {
+        if (!pressed())
+            return false;
+        delay(10);
+    }
+    return true;
+}
+
+static void goToSleep() {
+    waitForRelease();
+
+    Display::shutdown();
+
+    rtc_gpio_pullup_en((gpio_num_t)Config::STANDBY_PIN);
+    rtc_gpio_pulldown_dis((gpio_num_t)Config::STANDBY_PIN);
+
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)Config::STANDBY_PIN, 0);
+    esp_deep_sleep_start();  // kehrt nie zurück — Aufwachen ist ein Reset
+}
 
 // Fatal boot error: shown on the bootscreen below the logo (warning sign plus
 // message), then the device halts. Nothing else runs -- a device that cannot
@@ -99,6 +133,34 @@ void setup() {
     }
     delay(1000);
 
+    rtc_gpio_deinit(
+        (gpio_num_t)Config::STANDBY_PIN);  // Pin aus dem RTC-Modus zurückholen
+    pinMode(Config::STANDBY_PIN, INPUT_PULLUP);
+
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    switch (cause) {
+    case ESP_SLEEP_WAKEUP_EXT0:
+        Serial.println("EXT0 (Taster)");
+        break;
+    case ESP_SLEEP_WAKEUP_TIMER:
+        Serial.println("Timer");
+        break;
+    default:
+        Serial.println("Power-On / Reset");
+        break;
+    }
+
+    if (cause == ESP_SLEEP_WAKEUP_EXT0) {
+        // EXT0 löst schon beim ersten Kontakt aus. Wer nur kurz antippt, soll
+        // das Gerät nicht starten -> Haltezeit nachträglich prüfen.
+        if (!heldFor(Config::STANDBY_HOLD_MS)) {
+            Serial.println("Zu kurz gedrückt");
+            goToSleep();
+        }
+        Serial.println("Wake bestätigt");
+        waitForRelease();  // sonst löst derselbe Druck gleich den Sleep aus
+    }
+
     Logger::begin(Serial, static_cast<Logger::Level>(Config::LOG_LEVEL));
     Logger::setSerialOutputEnabled(Config::LOG_SERIAL_OUTPUT);
 
@@ -141,7 +203,7 @@ void setup() {
     // The simulator has no seesaw hardware, so it boots on without input.
     if (!Input::init()) {
 #ifndef WOKWI_SIMULATOR
-        bootFail("no input controller found\nconnect a rotary or gamepad");
+        // bootFail("no input controller found\nconnect a rotary or gamepad");
 #else
         LOGW("Boot", "No input controller (simulator build); continuing");
 #endif
@@ -176,8 +238,18 @@ void setup() {
 }
 
 void loop() {
+    static uint32_t pressStart = 0;
+
     Network::loop();
     DynamicFTPServer::loop();
     Input::poll();
     LuaHost::loop();
+
+    if (!pressed()) {
+        pressStart = 0;
+    } else if (pressStart == 0) {
+        pressStart = millis();
+    } else if (millis() - pressStart >= Config::STANDBY_HOLD_MS) {
+        goToSleep();
+    }
 }

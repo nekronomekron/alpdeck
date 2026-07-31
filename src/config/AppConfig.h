@@ -40,6 +40,9 @@ constexpr int16_t DISPLAY_PIN_SCK = 12;
 constexpr int16_t DISPLAY_PIN_MISO = 13;
 constexpr int16_t DISPLAY_PIN_MOSI = 11;
 
+constexpr int16_t STANDBY_HOLD_MS = 1500;
+constexpr int16_t STANDBY_PIN = 5;
+
 // SD card. Shares the display's SPI bus, so only CS is board-specific. Matches
 // TF_CS in the LOLIN S3 PRO variant's pins_arduino.h.
 constexpr int16_t SD_PIN_CS = 46;
