@@ -40,8 +40,10 @@ constexpr int16_t DISPLAY_PIN_SCK = 12;
 constexpr int16_t DISPLAY_PIN_MISO = 13;
 constexpr int16_t DISPLAY_PIN_MOSI = 11;
 
-constexpr int16_t STANDBY_HOLD_MS = 1500;
-constexpr int16_t STANDBY_PIN = 5;
+// Power button: held this long it sleeps the device, and the same hold is
+// required to confirm a wake, so a brushed button does not boot it.
+constexpr uint32_t POWER_BUTTON_HOLD_MS = 1500;
+constexpr uint8_t POWER_BUTTON_PIN = 5;
 
 // SD card. Shares the display's SPI bus, so only CS is board-specific. Matches
 // TF_CS in the LOLIN S3 PRO variant's pins_arduino.h.
