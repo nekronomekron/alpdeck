@@ -70,6 +70,7 @@ class Canvas:
         self.text_color = BLACK
         self.text_bg = BLACK  # setTextColor(c) sets both -> transparent
         self.wrap = True
+        self.gfx_font = None  # None = the built-in 6x8 face
 
         # Clip window, used by the e-paper partial-window emulation.
         self.clip = (0, 0, width, height)
@@ -318,7 +319,44 @@ class Canvas:
         self.cursor_x = x
         self.cursor_y = y
 
+    def set_font(self, font):
+        self.gfx_font = font
+
+    def _draw_char_custom(self, x, y, char, color, size_x, size_y):
+        """Adafruit_GFX's custom-font branch: a bit stream, MSB first.
+
+        Note it ignores the background entirely -- custom fonts are always
+        drawn transparent, unlike the built-in one.
+        """
+        font = self.gfx_font
+        glyph = font.glyph(ord(char) & 0xFF)
+        if glyph is None:
+            return
+        offset, gw, gh, _advance, x_offset, y_offset = glyph
+
+        bits = 0
+        bit = 0
+        for row in range(gh):
+            for column in range(gw):
+                if not (bit & 7):
+                    bits = font.bitmaps[offset]
+                    offset += 1
+                bit += 1
+                if bits & 0x80:
+                    if size_x == 1 and size_y == 1:
+                        self.draw_pixel(x + x_offset + column,
+                                        y + y_offset + row, color)
+                    else:
+                        self.fill_rect(x + (x_offset + column) * size_x,
+                                       y + (y_offset + row) * size_y,
+                                       size_x, size_y, color)
+                bits = (bits << 1) & 0xFF
+
     def draw_char(self, x, y, char, color, background, size_x, size_y):
+        if self.gfx_font is not None:
+            self._draw_char_custom(x, y, char, color, size_x, size_y)
+            return
+
         code = ord(char) & 0xFF
         if x >= self.width or y >= self.height:
             return
@@ -350,19 +388,99 @@ class Canvas:
 
     def print(self, text):
         for char in str(text):
-            if char == "\n":
-                self.cursor_x = 0
-                self.cursor_y += self.text_size_y * 8
-            elif char != "\r":
-                if self.wrap and (self.cursor_x + self.text_size_x * 6) > self.width:
+            if self.gfx_font is None:
+                if char == "\n":
                     self.cursor_x = 0
                     self.cursor_y += self.text_size_y * 8
-                self.draw_char(
-                    self.cursor_x, self.cursor_y, char,
-                    self.text_color, self.text_bg,
-                    self.text_size_x, self.text_size_y,
-                )
-                self.cursor_x += self.text_size_x * 6
+                elif char != "\r":
+                    if self.wrap and (self.cursor_x + self.text_size_x * 6) > self.width:
+                        self.cursor_x = 0
+                        self.cursor_y += self.text_size_y * 8
+                    self.draw_char(
+                        self.cursor_x, self.cursor_y, char,
+                        self.text_color, self.text_bg,
+                        self.text_size_x, self.text_size_y,
+                    )
+                    self.cursor_x += self.text_size_x * 6
+                continue
+
+            font = self.gfx_font
+            if char == "\n":
+                self.cursor_x = 0
+                self.cursor_y += self.text_size_y * font.y_advance
+            elif char != "\r":
+                glyph = font.glyph(ord(char) & 0xFF)
+                if glyph is None:
+                    continue
+                _offset, gw, gh, advance, x_offset, _y_offset = glyph
+                if gw > 0 and gh > 0:
+                    if self.wrap and (self.cursor_x + self.text_size_x *
+                                      (x_offset + gw)) > self.width:
+                        self.cursor_x = 0
+                        self.cursor_y += self.text_size_y * font.y_advance
+                    self.draw_char(self.cursor_x, self.cursor_y, char,
+                                   self.text_color, self.text_bg,
+                                   self.text_size_x, self.text_size_y)
+                self.cursor_x += advance * self.text_size_x
+
+    def get_text_bounds(self, text, x, y):
+        """Adafruit_GFX::getTextBounds -> (x1, y1, width, height)."""
+        min_x = min_y = 0x7FFF
+        max_x = max_y = -0x8000
+        cursor_x, cursor_y = x, y
+
+        for char in str(text):
+            if self.gfx_font is None:
+                if char == "\n":
+                    cursor_x = x
+                    cursor_y += self.text_size_y * 8
+                elif char != "\r":
+                    if self.wrap and (cursor_x + self.text_size_x * 6) > self.width:
+                        cursor_x = x
+                        cursor_y += self.text_size_y * 8
+                    x2 = cursor_x + self.text_size_x * 6 - 1
+                    y2 = cursor_y + self.text_size_y * 8 - 1
+                    min_x, min_y = min(min_x, cursor_x), min(min_y, cursor_y)
+                    max_x, max_y = max(max_x, x2), max(max_y, y2)
+                    cursor_x += self.text_size_x * 6
+                continue
+
+            font = self.gfx_font
+            if char == "\n":
+                cursor_x = x
+                cursor_y += self.text_size_y * font.y_advance
+            elif char != "\r":
+                glyph = font.glyph(ord(char) & 0xFF)
+                if glyph is None:
+                    continue
+                _offset, gw, gh, advance, x_offset, y_offset = glyph
+                if gw > 0 and gh > 0:
+                    if self.wrap and (cursor_x + self.text_size_x *
+                                      (x_offset + gw)) > self.width:
+                        cursor_x = x
+                        cursor_y += self.text_size_y * font.y_advance
+                    x1 = cursor_x + x_offset * self.text_size_x
+                    y1 = cursor_y + y_offset * self.text_size_y
+                    x2 = x1 + gw * self.text_size_x - 1
+                    y2 = y1 + gh * self.text_size_y - 1
+                    min_x, min_y = min(min_x, x1), min(min_y, y1)
+                    max_x, max_y = max(max_x, x2), max(max_y, y2)
+                cursor_x += advance * self.text_size_x
+
+        if max_x < min_x:
+            return x, y, 0, 0
+        return min_x, min_y, max_x - min_x + 1, max_y - min_y + 1
+
+    def draw_bitmap(self, x, y, data, w, h, color, background=None):
+        """Adafruit_GFX::drawBitmap. background=None leaves clear bits alone."""
+        byte_width = (w + 7) // 8
+        for row in range(h):
+            for column in range(w):
+                byte = data[row * byte_width + (column >> 3)]
+                if byte & (0x80 >> (column & 7)):
+                    self.draw_pixel(x + column, y + row, color)
+                elif background is not None:
+                    self.draw_pixel(x + column, y + row, background)
 
     # ------------------------------------------------------------------ export
 
@@ -372,3 +490,72 @@ class Canvas:
 
     def ink_pixels(self):
         return sum(1 for value in self.buffer if value == BLACK)
+
+
+# ---------------------------------------------------------------- GFX fonts
+
+class GfxFont:
+    """A parsed Adafruit GFXfont: glyph bitmaps plus per-glyph metrics."""
+
+    def __init__(self, bitmaps, glyphs, first, last, y_advance):
+        self.bitmaps = bitmaps
+        self.glyphs = glyphs  # list of (offset, w, h, xAdvance, xOffset, yOffset)
+        self.first = first
+        self.last = last
+        self.y_advance = y_advance
+
+    def glyph(self, code):
+        if code < self.first or code > self.last:
+            return None
+        return self.glyphs[code - self.first]
+
+
+def _signed_byte(value):
+    return value - 256 if value > 127 else value
+
+
+def load_gfx_font(name):
+    """Parse one of Adafruit_GFX's Fonts/*.h headers.
+
+    Parsed rather than transcribed for the same reason as glcdfont: the goldens
+    must show the glyphs the device draws, not a copy that can drift.
+    """
+    pattern = os.path.join(_PROJECT_ROOT, ".pio", "libdeps", "*",
+                           "Adafruit GFX Library", "Fonts", name + ".h")
+    matches = sorted(glob.glob(pattern))
+    if not matches:
+        raise RuntimeError(
+            "font %s.h not found under .pio/libdeps. Run `pio run -e Alpdeck` "
+            "once so PlatformIO fetches Adafruit GFX." % name
+        )
+
+    with open(matches[0], "r", encoding="utf-8", errors="replace") as handle:
+        source = handle.read()
+
+    # Bitmaps: the first brace-delimited array in the file.
+    bitmap_start = source.index("Bitmaps[]")
+    bitmap_body = source[source.index("{", bitmap_start) + 1:
+                         source.index("};", bitmap_start)]
+    bitmaps = [int(token, 16) for token in re.findall(r"0[xX][0-9a-fA-F]{1,2}", bitmap_body)]
+
+    # Glyphs: rows of six comma-separated numbers, some negative.
+    glyph_start = source.index("Glyphs[]")
+    glyph_body = source[source.index("{", glyph_start) + 1:
+                        source.index("};", glyph_start)]
+    glyphs = []
+    for row in re.findall(r"\{([^{}]*)\}", glyph_body):
+        numbers = [int(value) for value in re.findall(r"-?\d+", row)]
+        if len(numbers) == 6:
+            glyphs.append(tuple(numbers))
+
+    # Font record: first, last, yAdvance are the trailing three numbers.
+    # Stop at the closing brace: these headers end with an "// Approx. N bytes"
+    # comment whose number would otherwise be read as yAdvance.
+    font_start = source.rindex("PROGMEM = {")
+    record = source[font_start:source.index("};", font_start)]
+    numbers = re.findall(r"0[xX][0-9a-fA-F]+|\b\d+\b", record)
+    first = int(numbers[-3], 0)
+    last = int(numbers[-2], 0)
+    y_advance = int(numbers[-1], 0)
+
+    return GfxFont(bitmaps, glyphs, first, last, y_advance)

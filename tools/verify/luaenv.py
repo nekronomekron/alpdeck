@@ -18,7 +18,7 @@ import os
 from lupa import LuaRuntime
 
 from epaper import Panel
-from gfx import BLACK, WHITE
+from gfx import BLACK, WHITE, load_gfx_font
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -35,12 +35,11 @@ class HarnessStop(Exception):
 # The exact set the firmware installs. Anything outside this is a sandbox hole.
 ALLOWED_LIBRARIES = ("table", "string", "math")
 
-# Names luaopen_base installs. dofile/loadfile reach the C stdio and are listed
-# here so the conformance check can assert on them deliberately rather than by
-# omission.
+# Names luaopen_base installs, minus dofile and loadfile: those reach C stdio
+# rather than fs.*, and LuaWrapper nils them out after opening the library.
 BASE_NAMES = (
-    "assert", "collectgarbage", "dofile", "error", "getmetatable", "ipairs",
-    "load", "loadfile", "next", "pairs", "pcall", "print", "rawequal",
+    "assert", "collectgarbage", "error", "getmetatable", "ipairs",
+    "load", "next", "pairs", "pcall", "print", "rawequal",
     "rawget", "rawlen", "rawset", "select", "setmetatable", "tonumber",
     "tostring", "type", "xpcall", "_VERSION",
 )
@@ -49,16 +48,28 @@ _BINDINGS_LUA = """
 local host = ...
 
 local display = {}
-function display.clear(full) host.display_clear(full and true or false) end
-function display.text(x, y, s, size, invert) host.display_text(x, y, tostring(s), size or 1, invert and true or false) end
+function display.begin(mode, x, y, w, h)
+    if x then
+        host.display_begin_region(x, y, w, h)
+    else
+        host.display_begin(mode or "partial")
+    end
+end
+function display.show() host.display_show() end
+function display.size() return host.display_width(), host.display_height() end
+function display.timing() return host.display_timing() end
+function display.color(c) host.display_color(c) end
+function display.font(name) host.display_font(name or "default") end
+function display.clear() host.display_clear() end
+function display.text(x, y, s, size) host.display_text(x, y, tostring(s), size or 1) end
+function display.measure(s, size) return host.display_measure_w(tostring(s), size or 1), host.display_measure_h(tostring(s), size or 1) end
+function display.pixel(x, y) host.display_pixel(x, y) end
+function display.line(x0, y0, x1, y1) host.display_line(x0, y0, x1, y1) end
 function display.rect(x, y, w, h, fill) host.display_rect(x, y, w, h, fill and true or false) end
 function display.circle(x, y, r, fill) host.display_circle(x, y, r, fill and true or false) end
 function display.roundrect(x, y, w, h, r, fill) host.display_roundrect(x, y, w, h, r, fill and true or false) end
 function display.triangle(x0, y0, x1, y1, x2, y2, fill) host.display_triangle(x0, y0, x1, y1, x2, y2, fill and true or false) end
-function display.line(x0, y0, x1, y1) host.display_line(x0, y0, x1, y1) end
-function display.pixel(x, y) host.display_pixel(x, y) end
-function display.show() host.display_show() end
-function display.size() return host.display_width(), host.display_height() end
+function display.bitmap(x, y, w, h, data, bg) host.display_bitmap(x, y, w, h, data, bg) end
 
 local input = {}
 function input.read(timeout) return host.input_read(timeout or 0) end
@@ -81,9 +92,27 @@ function sys.memory() return host.sys_lua_bytes(), host.sys_free_heap() end
 function sys.temperature() return host.sys_temperature() end
 function sys.info() return host.sys_info() end
 function sys.wifi() return host.sys_wifi() end
+function sys.appdir() return host.sys_appdir() end
 
 return display, input, fs, sys
 """
+
+
+# Loaded once: the same faces DisplayApi.cpp embeds, parsed from the same
+# headers PlatformIO fetched.
+_FONTS = None
+
+
+def fonts():
+    global _FONTS
+    if _FONTS is None:
+        _FONTS = {
+            "default": None,
+            "sans": load_gfx_font("FreeSans9pt7b"),
+            "bold": load_gfx_font("FreeSansBold9pt7b"),
+            "pixel": load_gfx_font("Org_01"),
+        }
+    return _FONTS
 
 
 class VirtualFs:
@@ -97,6 +126,17 @@ class VirtualFs:
         self.flash_dir = flash_dir or os.path.join(PROJECT_ROOT, "data")
         self.sd_dir = sd_dir or os.path.join(PROJECT_ROOT, "sdcard")
         self.writes = {}
+        self.sandbox_root = ""
+
+    def resolve(self, path):
+        """Mirrors FsApi::resolve: relative paths hang off the app folder."""
+        if ".." in path:
+            raise ValueError("'..' is not allowed")
+        if path.startswith("/"):
+            return path
+        if not self.sandbox_root:
+            raise ValueError("relative path, but this script has no app directory")
+        return self.sandbox_root + "/" + path
 
     def _local(self, path):
         if path == "/sd":
@@ -106,7 +146,7 @@ class VirtualFs:
         return os.path.join(self.flash_dir, path.lstrip("/").replace("/", os.sep))
 
     def list(self, path):
-        target = self._local(path)
+        target = self._local(self.resolve(path))
         if not os.path.isdir(target):
             return None
         entries = []
@@ -119,11 +159,19 @@ class VirtualFs:
         return entries
 
     def read(self, path):
-        target = self._local(path)
+        # Byte-preserving: fs.read on the device hands back raw bytes, and
+        # sprite data is not text. latin-1 maps every byte to one code point,
+        # so the value survives the trip through Lua and back.
+        #
+        # LIMIT: lupa re-encodes as UTF-8 on the way into Lua, so a Lua-side
+        # `#data` on binary content reports more than the device would. Nothing
+        # in the launcher or the sample apps does that; the length check that
+        # matters happens on the Python side, where it is exact.
+        target = self._local(self.resolve(path))
         if not os.path.isfile(target):
             return None
-        with open(target, "r", encoding="utf-8", errors="replace") as handle:
-            return handle.read()
+        with open(target, "rb") as handle:
+            return handle.read().decode("latin-1")
 
     def exists(self, path):
         return os.path.exists(self._local(path))
@@ -143,6 +191,7 @@ class Host:
         self.launch_request = None
         self.exited = False
         self.clock_ms = 0
+        self.ink = BLACK
         self.lua = None  # set by run_script, needed to build Lua tables
         self.wifi_status = wifi if wifi is not None else {"connected": False}
         self.snapshot = {
@@ -155,57 +204,25 @@ class Host:
         }
 
     # ------------------------------------------------------------------ display
+    #
+    # Mirrors DisplayApi.cpp, including the two things apps actually notice:
+    # the ink is stateful, and text() positions by the top-left corner for
+    # every font rather than by the baseline.
 
     def _canvas(self):
         return self.panel.ensure_frame()
 
-    def display_clear(self, full):
+    def display_begin(self, mode):
         if not self.panel.frame_open:
-            self.panel.begin_frame(partial=not full)
-        self.panel.canvas.fill_screen(WHITE)
+            self.panel.begin_frame(partial=(mode != "full"))
+        self.ink = BLACK
+        self.panel.canvas.set_font(None)
 
-    def display_text(self, x, y, text, size, invert):
-        size = max(1, min(8, int(size)))
-        canvas = self._canvas()
-        canvas.set_text_size(size)
-        canvas.set_text_color(WHITE if invert else BLACK)
-        canvas.set_cursor(int(x), int(y))
-        canvas.print(text)
-
-    def display_rect(self, x, y, w, h, fill):
-        canvas = self._canvas()
-        if fill:
-            canvas.fill_rect(int(x), int(y), int(w), int(h), BLACK)
-        else:
-            canvas.draw_rect(int(x), int(y), int(w), int(h), BLACK)
-
-    def display_circle(self, x, y, r, fill):
-        canvas = self._canvas()
-        if fill:
-            canvas.fill_circle(int(x), int(y), int(r), BLACK)
-        else:
-            canvas.draw_circle(int(x), int(y), int(r), BLACK)
-
-    def display_roundrect(self, x, y, w, h, r, fill):
-        canvas = self._canvas()
-        if fill:
-            canvas.fill_round_rect(int(x), int(y), int(w), int(h), int(r), BLACK)
-        else:
-            canvas.draw_round_rect(int(x), int(y), int(w), int(h), int(r), BLACK)
-
-    def display_triangle(self, x0, y0, x1, y1, x2, y2, fill):
-        canvas = self._canvas()
-        args = (int(x0), int(y0), int(x1), int(y1), int(x2), int(y2), BLACK)
-        if fill:
-            canvas.fill_triangle(*args)
-        else:
-            canvas.draw_triangle(*args)
-
-    def display_line(self, x0, y0, x1, y1):
-        self._canvas().draw_line(int(x0), int(y0), int(x1), int(y1), BLACK)
-
-    def display_pixel(self, x, y):
-        self._canvas().draw_pixel(int(x), int(y), BLACK)
+    def display_begin_region(self, x, y, w, h):
+        if not self.panel.frame_open:
+            self.panel.begin_region(int(x), int(y), int(w), int(h))
+        self.ink = BLACK
+        self.panel.canvas.set_font(None)
 
     def display_show(self):
         self.panel.end_frame()
@@ -215,6 +232,85 @@ class Host:
 
     def display_height(self):
         return self.panel.height
+
+    def display_timing(self):
+        # The mock has no real panel to wait for; report the documented cost of
+        # the mode that was used, so pacing logic can at least be exercised.
+        return 1200 if self.panel.full_refreshes else 400
+
+    def display_color(self, name):
+        self.ink = WHITE if name == "white" else BLACK
+
+    def display_font(self, name):
+        table = fonts()
+        if name not in table:
+            raise ValueError("unknown font '%s'" % name)
+        self._canvas().set_font(table[name])
+
+    def display_clear(self):
+        self._canvas().fill_screen(self.ink)
+
+    def _text_metrics(self, text, size):
+        canvas = self._canvas()
+        canvas.set_text_size(size)
+        _x1, y1, width, height = canvas.get_text_bounds(text, 0, 0)
+        return width, height, y1
+
+    def display_text(self, x, y, text, size):
+        size = max(1, min(8, int(size)))
+        _w, _h, top_offset = self._text_metrics(text, size)
+        canvas = self._canvas()
+        canvas.set_text_color(self.ink)
+        canvas.set_cursor(int(x), int(y) - top_offset)
+        canvas.print(text)
+
+    def display_measure_w(self, text, size):
+        return self._text_metrics(text, max(1, min(8, int(size))))[0]
+
+    def display_measure_h(self, text, size):
+        return self._text_metrics(text, max(1, min(8, int(size))))[1]
+
+    def display_pixel(self, x, y):
+        self._canvas().draw_pixel(int(x), int(y), self.ink)
+
+    def display_line(self, x0, y0, x1, y1):
+        self._canvas().draw_line(int(x0), int(y0), int(x1), int(y1), self.ink)
+
+    def display_rect(self, x, y, w, h, fill):
+        canvas = self._canvas()
+        args = (int(x), int(y), int(w), int(h), self.ink)
+        canvas.fill_rect(*args) if fill else canvas.draw_rect(*args)
+
+    def display_circle(self, x, y, r, fill):
+        canvas = self._canvas()
+        args = (int(x), int(y), int(r), self.ink)
+        canvas.fill_circle(*args) if fill else canvas.draw_circle(*args)
+
+    def display_roundrect(self, x, y, w, h, r, fill):
+        canvas = self._canvas()
+        args = (int(x), int(y), int(w), int(h), int(r), self.ink)
+        canvas.fill_round_rect(*args) if fill else canvas.draw_round_rect(*args)
+
+    def display_triangle(self, x0, y0, x1, y1, x2, y2, fill):
+        canvas = self._canvas()
+        args = (int(x0), int(y0), int(x1), int(y1), int(x2), int(y2), self.ink)
+        canvas.fill_triangle(*args) if fill else canvas.draw_triangle(*args)
+
+    def display_bitmap(self, x, y, w, h, data, background):
+        w, h = int(w), int(h)
+        if w <= 0 or h <= 0:
+            raise ValueError("bitmap size must be positive, got %dx%d" % (w, h))
+
+        payload = data.encode("latin-1") if isinstance(data, str) else bytes(data)
+        expected = ((w + 7) // 8) * h
+        if len(payload) != expected:
+            raise ValueError("bitmap data is %d bytes, %dx%d needs %d"
+                             % (len(payload), w, h, expected))
+
+        bg = None
+        if background is not None:
+            bg = WHITE if background == "white" else BLACK
+        self._canvas().draw_bitmap(int(x), int(y), payload, w, h, self.ink, bg)
 
     # -------------------------------------------------------------------- input
 
@@ -291,11 +387,14 @@ class Host:
             "psram_free_bytes": 8000000, "heap_bytes": 327680,
             "heap_free_bytes": 180000, "heap_min_free_bytes": 150000,
             "uptime_ms": self.clock_ms, "reset_reason": "poweron",
-            "version": "0.1",
+            "version": "0.1", "api": 1,
         })
 
     def sys_wifi(self):
         return self.lua.table_from(self.wifi_status)
+
+    def sys_appdir(self):
+        return self.vfs.sandbox_root
 
 
 def build_environment(lua, host):

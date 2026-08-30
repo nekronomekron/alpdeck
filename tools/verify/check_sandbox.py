@@ -29,25 +29,14 @@ REQUIRED = [
     ("fs table", "type(fs) == 'table' and type(fs.read) == 'function'", True),
     ("sys table", "type(sys) == 'table' and type(sys.info) == 'function'", True),
     ("_G is the sandbox", "_G.display ~= nil and _G.os == nil", True),
+    # luaopen_base installs these and they use C stdio, not fs.*; both storage
+    # mounts are visible to the ESP VFS, so they were a way around the path
+    # sandbox. LuaWrapper nils them out after opening the base library.
+    ("dofile absent", "dofile == nil", True),
+    ("loadfile absent", "loadfile == nil", True),
 ]
 
-KNOWN_ISSUES = [
-    (
-        "loadfile absent",
-        "loadfile == nil",
-        True,
-        "luaopen_base installs loadfile/dofile, which reach C stdio rather than "
-        "fs.*. On ESP32 the LittleFS and SD mounts are registered with the ESP "
-        "VFS, so these plausibly bypass the path sandbox entirely. Not "
-        "demonstrated on hardware -- but the policy says they should not exist.",
-    ),
-    (
-        "dofile absent",
-        "dofile == nil",
-        True,
-        "See loadfile.",
-    ),
-]
+KNOWN_ISSUES = []
 
 
 def _evaluate(expression):

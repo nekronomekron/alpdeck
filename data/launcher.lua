@@ -5,31 +5,73 @@
 -- usable with no card inserted.
 --
 -- Apps are discovered at /sd/apps/<name>/main.lua. An optional app.lua beside
--- it returns a table of metadata, e.g.  return { name = "Snake", version = "1.0" }
--- It is parsed with load() rather than a JSON reader: we already have an
--- interpreter, so a manifest is just Lua.
+-- it returns a table of metadata; it is parsed with load() rather than a JSON
+-- reader, because the device already has an interpreter.
+--
+-- Sections below, in order: layout, model, discovery, drawing, input. Nothing
+-- draws outside the drawing section, and nothing mutates the model outside the
+-- model section.
+
+local W, H = display.size()
+local INFO = sys.info()
+local API = INFO.api
+local VERSION = "v" .. (INFO.version or "?")
 
 local APPS_DIR = "/sd/apps"
 local ENTRY = "main.lua"
 local MANIFEST = "app.lua"
 
-local ROW_HEIGHT = 22
-local NAV_HEIGHT = 40  -- navbar, closed by a full-width 2px rule
-local LIST_TOP = NAV_HEIGHT + 14
 local MARGIN = 12
-
-local W, H = display.size()
+local NAV_HEIGHT = 40        -- navbar, closed by a full-width 2px rule
+local ROW_HEIGHT = 24
+local LIST_TOP = NAV_HEIGHT + 14
 local VISIBLE = math.floor((H - LIST_TOP - 6) / ROW_HEIGHT)
-
-local VERSION = "v" .. (sys.info().version or "?")
 
 -- Ghosting builds up over partial refreshes; clear it periodically.
 local FULL_REFRESH_EVERY = 8
 
-local apps = {}
-local selected = 1
-local top = 1
-local refreshes = 0
+-- Redraw on this cadence even with no input, so the wifi indicator does not go
+-- stale on a device sitting idle.
+local IDLE_REDRAW_MS = 30000
+
+--------------------------------------------------------------------- model --
+
+local state = {
+    apps = {},
+    selected = 1,
+    top = 1,
+    refreshes = 0,
+}
+
+-- Moves the selection, wrapping at both ends, and scrolls the window to keep
+-- it visible. Returns true only when something changed, so the caller does not
+-- pay 400ms for a refresh with nothing new to show.
+local function moveBy(delta)
+    if #state.apps == 0 then
+        return false
+    end
+
+    local target = state.selected + delta
+    if target < 1 then
+        target = #state.apps
+    elseif target > #state.apps then
+        target = 1
+    end
+
+    if target == state.selected then
+        return false
+    end
+    state.selected = target
+
+    if state.selected < state.top then
+        state.top = state.selected
+    elseif state.selected >= state.top + VISIBLE then
+        state.top = state.selected - VISIBLE + 1
+    end
+    return true
+end
+
+----------------------------------------------------------------- discovery --
 
 local function manifestFor(dir)
     local path = dir .. "/" .. MANIFEST
@@ -42,8 +84,8 @@ local function manifestFor(dir)
         return nil
     end
 
-    -- A broken manifest must not take the launcher down, so compile and call it
-    -- in protected mode and fall back to the folder name.
+    -- A broken manifest must not take the launcher down, so compile and call
+    -- it in protected mode and fall back to the folder name.
     local chunk = load(source, "=" .. path, "t", {})
     if not chunk then
         return nil
@@ -57,7 +99,9 @@ local function manifestFor(dir)
 end
 
 local function discover()
-    apps = {}
+    state.apps = {}
+    state.selected = 1
+    state.top = 1
 
     local entries = fs.list(APPS_DIR)
     if not entries then
@@ -66,31 +110,36 @@ local function discover()
     end
 
     for _, entry in ipairs(entries) do
-        -- What makes something an app is a readable main.lua, not the directory
-        -- flag. Probing for the file directly is both simpler and robust to a
-        -- missing or unreliable `dir` field from the fs binding.
+        -- What makes something an app is a readable main.lua, not the
+        -- directory flag: probing for the file is simpler and survives an
+        -- unreliable dir field from the fs binding.
         local dir = APPS_DIR .. "/" .. entry.name
         local entryPath = dir .. "/" .. ENTRY
 
         if fs.exists(entryPath) then
             local meta = manifestFor(dir) or {}
-            apps[#apps + 1] = {
+            state.apps[#state.apps + 1] = {
                 name = meta.name or entry.name,
                 version = meta.version,
                 path = entryPath,
-                dir = dir,
+                -- A declared API version that does not match the firmware
+                -- means the card was not re-copied after a firmware change.
+                -- Left launchable, but the reason it may misbehave is shown.
+                stale = meta.api ~= nil and meta.api ~= API,
             }
         end
     end
 
-    sys.log("discover: " .. #apps .. " app(s) found")
+    sys.log("discover: " .. #state.apps .. " app(s) found")
 
-    table.sort(apps, function(a, b)
+    table.sort(state.apps, function(a, b)
         return a.name:lower() < b.name:lower()
     end)
 end
 
--- Four ascending signal bars, 18px wide in total. Filled count follows the
+------------------------------------------------------------------- drawing --
+
+-- Four ascending signal bars, 18px wide in total. The filled count follows the
 -- RSSI; offline draws all bars hollow with a strike-through.
 local function drawWifiIcon(x, baseline)
     local wifi = sys.wifi()
@@ -111,7 +160,7 @@ local function drawWifiIcon(x, baseline)
     end
 end
 
--- Hamburger placeholder for the options menu (menu itself comes later).
+-- Hamburger placeholder for the options menu (the menu itself comes later).
 local function drawMenuIcon(x, y)
     for i = 0, 2 do
         display.rect(x, y + i * 5, 16, 2, true)
@@ -119,8 +168,12 @@ local function drawMenuIcon(x, y)
 end
 
 local function drawNavbar()
-    display.text(MARGIN, 10, "alpdeck", 3)
-    display.text(MARGIN + 7 * 18 + 6, 24, VERSION, 1)
+    display.font("bold")
+    local titleW = display.measure("alpdeck", 2)
+    display.text(MARGIN, 6, "alpdeck", 2)
+
+    display.font("default")
+    display.text(MARGIN + titleW + 8, 22, VERSION, 1)
 
     local menuX = W - MARGIN - 16
     drawMenuIcon(menuX, 14)
@@ -129,10 +182,49 @@ local function drawNavbar()
     display.rect(0, NAV_HEIGHT, W, 2, true)
 end
 
--- Right-edge scrollbar, only when the list does not fit the screen. The thumb
--- tracks the scroll window, not the selection.
+local function drawEmpty()
+    display.font("bold")
+    display.text(MARGIN, LIST_TOP + 8, "no apps found", 2)
+
+    display.font("default")
+    display.text(MARGIN, LIST_TOP + 48, APPS_DIR .. "/<name>/" .. ENTRY, 1)
+    display.text(MARGIN, LIST_TOP + 64, "add apps to the sd card, then press", 1)
+    display.text(MARGIN, LIST_TOP + 76, "select to rescan.", 1)
+end
+
+-- The selected row is a filled black bar, so everything on it switches to
+-- white ink. Getting this wrong is how the list once rendered black on black
+-- and looked empty.
+local function drawRow(app, index, y)
+    local active = index == state.selected
+
+    if active then
+        display.rect(MARGIN, y - 4, W - 2 * MARGIN, ROW_HEIGHT, true)
+        display.color("white")
+        display.font("default")
+        display.text(MARGIN + 6, y + 4, ">", 1)
+    end
+
+    display.font("sans")
+    display.text(MARGIN + 24, y, app.name, 1)
+
+    display.font("default")
+    local label = app.version or ""
+    if app.stale then
+        label = (label ~= "" and label .. "  " or "") .. "api!"
+    end
+    if label ~= "" then
+        local labelW = display.measure(label, 1)
+        display.text(W - MARGIN - 10 - labelW, y + 6, label, 1)
+    end
+
+    display.color("black")
+end
+
+-- Right-edge scrollbar, only when the list does not fit. The thumb tracks the
+-- scroll window, not the selection.
 local function drawScrollbar()
-    if #apps <= VISIBLE then
+    if #state.apps <= VISIBLE then
         return
     end
 
@@ -141,95 +233,42 @@ local function drawScrollbar()
     local trackH = H - 8 - trackY
     display.rect(x, trackY, 4, trackH)
 
-    local thumbH = math.max(10, math.floor(trackH * VISIBLE / #apps))
-    local maxTop = #apps - VISIBLE
-    local thumbY = trackY
-        + math.floor((trackH - thumbH) * (top - 1) / maxTop)
+    local thumbH = math.max(10, math.floor(trackH * VISIBLE / #state.apps))
+    local maxTop = #state.apps - VISIBLE
+    local thumbY = trackY + math.floor((trackH - thumbH) * (state.top - 1) / maxTop)
     display.rect(x, thumbY, 4, thumbH, true)
 end
 
-local function drawEmpty()
-    display.text(MARGIN, LIST_TOP + 10, "no apps found", 2)
-    display.text(MARGIN, LIST_TOP + 36, APPS_DIR .. "/<name>/" .. ENTRY, 1)
-    display.text(MARGIN, LIST_TOP + 50, "add apps to the sd card, then press", 1)
-    display.text(MARGIN, LIST_TOP + 62, "select to rescan.", 1)
-end
-
-local function drawRow(app, index, y)
-    local active = index == selected
-
-    -- The selected row is a filled black bar, so its text must draw white
-    -- (invert). A non-selected row is black text on white. Getting this wrong is
-    -- how the list first rendered black-on-black and looked empty.
-    if active then
-        display.rect(MARGIN, y - 4, W - 2 * MARGIN, ROW_HEIGHT, true)
-    end
-
-    display.text(MARGIN + 6, y, active and ">" or " ", 2, active)
-    display.text(MARGIN + 24, y, app.name, 2, active)
-
-    if app.version then
-        display.text(W - MARGIN - 6 * #app.version - 6, y + 4, app.version, 1,
-            active)
-    end
-end
-
 local function draw()
-    -- Ghosting builds up over partial refreshes, so every FULL_REFRESH_EVERY
-    -- frames open the frame in full mode instead. The mode is chosen here, at
-    -- clear(), because it is fixed for the life of the frame.
-    refreshes = refreshes + 1
-    local full = refreshes % FULL_REFRESH_EVERY == 1
+    -- The refresh mode is fixed for the life of the frame, so it is chosen
+    -- here at begin() and nowhere else.
+    state.refreshes = state.refreshes + 1
+    local full = state.refreshes % FULL_REFRESH_EVERY == 1
 
-    display.clear(full)
+    display.begin(full and "full" or "partial")
     drawNavbar()
 
-    if #apps == 0 then
+    if #state.apps == 0 then
         drawEmpty()
     else
         for offset = 0, VISIBLE - 1 do
-            local index = top + offset
-            local app = apps[index]
+            local index = state.top + offset
+            local app = state.apps[index]
             if app then
                 drawRow(app, index, LIST_TOP + offset * ROW_HEIGHT)
             end
         end
-
         drawScrollbar()
     end
 
     display.show()
 end
 
-local function moveBy(delta)
-    if #apps == 0 then
-        return false
-    end
-
-    local target = selected + delta
-    if target < 1 then
-        target = #apps
-    elseif target > #apps then
-        target = 1
-    end
-
-    if target == selected then
-        return false
-    end
-    selected = target
-
-    -- Keep the selection inside the window.
-    if selected < top then
-        top = selected
-    elseif selected >= top + VISIBLE then
-        top = selected - VISIBLE + 1
-    end
-    return true
-end
+--------------------------------------------------------------------- input --
 
 -- Event names carry their source controller (rotary_* / gamepad_*) so apps can
--- tell the two apart. The launcher itself accepts both, so either controller
--- alone can drive it.
+-- tell the two apart. The launcher accepts both, so either controller alone
+-- can drive it.
 local MOVE_DOWN = { rotary_cw = true, rotary_down = true, gamepad_down = true }
 local MOVE_UP = { rotary_ccw = true, rotary_up = true, gamepad_up = true }
 local LAUNCH = { rotary_select = true, gamepad_a = true, gamepad_start = true }
@@ -243,21 +282,20 @@ discover()
 draw()
 
 while true do
-    local event = input.read(30000)
+    local event = input.read(IDLE_REDRAW_MS)
 
     if event == nil then
-        -- Timeout: redraw so the wifi indicator tracks reality.
-        draw()
+        draw()  -- timeout: keep the wifi indicator honest
     elseif MOVE_DOWN[event] then
         if moveBy(1) then draw() end
     elseif MOVE_UP[event] then
         if moveBy(-1) then draw() end
     elseif LAUNCH[event] then
-        if #apps == 0 then
+        if #state.apps == 0 then
             discover()
             draw()
         else
-            local app = apps[selected]
+            local app = state.apps[state.selected]
             sys.log("launching " .. app.path)
             sys.launch(app.path)
             -- Returning hands control back to the host, which tears this state

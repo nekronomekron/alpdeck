@@ -53,18 +53,22 @@ of reach.
   midpoint circle, scanline triangle fill, the classic-font glyph loop). It is
   a reimplementation, not the library: if Adafruit_GFX changes how it
   rasterises, goldens can shift with no change to alpdeck.
-- Glyphs are parsed out of the real `glcdfont.c` that PlatformIO fetched into
-  `.pio/libdeps/`, so text cannot drift from the device. Run
+- Glyphs are parsed out of the real `glcdfont.c` and `Fonts/*.h` that
+  PlatformIO fetched into `.pio/libdeps/`, so text cannot drift from the
+  device -- including the three GFXfonts `display.font()` exposes. Run
   `pio run -e Alpdeck` once before the harness on a fresh checkout, otherwise
-  that file does not exist yet and the harness says so.
+  those files do not exist yet and the harness says so.
+- `fs.read` returns bytes decoded latin-1 so binary assets survive the trip
+  through Lua. lupa re-encodes as UTF-8 on the way in, so a Lua-side `#data`
+  over binary content reads longer than it would on the device. The length
+  check that matters -- the one `display.bitmap` makes -- happens on the
+  Python side and is exact.
 - The vendored interpreter and lupa are both Lua 5.5, so language semantics
   match.
 
 ## Known issues it reports
 
-`loadfile` and `dofile` are installed by `luaopen_base` and reach C stdio rather
-than `fs.*`. On the ESP32 both LittleFS and the SD card are registered with the
-ESP VFS, so these plausibly read files the path sandbox would refuse. Not
-demonstrated on hardware — but invariant 3 says `fs.*` is the only route to
-storage, and these are not it. They are reported on every run and become hard
-failures under `--strict` once removed.
+None at present. `KNOWN_ISSUES` in `check_sandbox.py` is the list of policy
+violations that exist but are not yet fixed: entries there are reported on
+every run rather than hidden, and move into `REQUIRED` once closed. `loadfile`
+and `dofile` were the first two, and are now removed from the sandbox.

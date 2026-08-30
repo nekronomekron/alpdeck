@@ -5,7 +5,7 @@
 #include <SD.h>
 
 #include "config/AppConfig.h"
-#include "core/lua/LuaBindings.h"
+#include "core/lua/LuaContext.h"
 #include "core/lua/LuaHost.h"
 #include "net/FtpService.h"
 #include "net/Network.h"
@@ -42,7 +42,7 @@ constexpr uint32_t kSerialAttachTimeoutMs = 1000;
 
 void startLauncher() {
     // The launcher only browses; an empty root denies it every fs write.
-    LuaBindings::setSandboxRoot("");
+    LuaContext::setSandboxRoot("");
 
     if (!LuaHost::run(Config::LAUNCHER_PATH)) {
         // Without a launcher there is nothing to operate. A fresh flash where
@@ -58,7 +58,7 @@ void startApp(const String& path) {
     if (slash > 0) {
         root = root.substring(0, slash);
     }
-    LuaBindings::setSandboxRoot(root);
+    LuaContext::setSandboxRoot(root);
 
     if (!LuaHost::run(path)) {
         LOGE(kLogTag, "%s could not start; returning to the launcher",
@@ -70,7 +70,7 @@ void startApp(const String& path) {
 // Fires on the main loop once a script's VM is fully torn down, so starting
 // the next one here can never leave two states alive.
 void onScriptFinished(const LuaHost::Finished& finished) {
-    const String request = LuaBindings::takeLaunchRequest();
+    const String request = LuaContext::takeLaunchRequest();
 
     if (!request.isEmpty()) {
         startApp(request);
@@ -193,7 +193,7 @@ void run() {
     // boot.lua is the user hook, so it runs with the same privileges as an app
     // but rooted at LittleFS. If it requests a launch, onScriptFinished
     // honours it and the launcher is skipped.
-    LuaBindings::setSandboxRoot("");
+    LuaContext::setSandboxRoot("");
     if (!LuaHost::run(Config::BOOT_SCRIPT_PATH)) {
         LOGW(kLogTag, "%s missing; starting the launcher directly",
              Config::BOOT_SCRIPT_PATH);

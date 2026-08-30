@@ -12,6 +12,12 @@ GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)>
                               Config::DISPLAY_PIN_BUSY));
 
 bool frameIsOpen = false;
+uint32_t lastRefreshDurationMs = 0;
+
+void openFrame() {
+    panel.firstPage();
+    frameIsOpen = true;
+}
 
 }  // namespace
 
@@ -63,19 +69,26 @@ void drawPartialWindow(int16_t x, int16_t y, int16_t w, int16_t h,
     panel.hibernate();
 }
 
-void beginFrame(bool partial) {
+void beginFrame(RefreshMode mode) {
     if (frameIsOpen) {
         return;  // already drawing; keep the caller's existing frame
     }
 
-    if (partial) {
+    if (mode == RefreshMode::Partial) {
         panel.setPartialWindow(0, 0, panel.width(), panel.height());
     } else {
         panel.setFullWindow();
     }
+    openFrame();
+}
 
-    panel.firstPage();
-    frameIsOpen = true;
+void beginFrame(int16_t x, int16_t y, int16_t w, int16_t h) {
+    if (frameIsOpen) {
+        return;
+    }
+
+    panel.setPartialWindow(x, y, w, h);
+    openFrame();
 }
 
 void endFrame() {
@@ -85,11 +98,15 @@ void endFrame() {
     frameIsOpen = false;
 
     // One page covers the panel, so this single call renders the whole frame.
+    const uint32_t startedMs = millis();
     panel.nextPage();
     panel.hibernate();
+    lastRefreshDurationMs = millis() - startedMs;
 }
 
 bool frameOpen() { return frameIsOpen; }
+
+uint32_t lastRefreshMs() { return lastRefreshDurationMs; }
 
 Adafruit_GFX& canvas() { return panel; }
 

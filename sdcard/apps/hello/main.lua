@@ -1,44 +1,120 @@
--- Example app. Copy the whole sdcard/apps/ tree onto the SD card.
+-- Example app, and the reference for what the API can do.
 --
--- Returning from this script hands control back to the launcher, so an app
--- needs no teardown of its own: the host closes the VM and frees everything.
+-- Copy the whole sdcard/ tree onto the card. Returning from this script hands
+-- control back to the launcher: the host closes the VM and frees everything,
+-- so an app needs no teardown of its own.
+--
+-- What it demonstrates, in the order it comes up:
+--   * loading an asset from the app's own folder with a relative path
+--   * drawing that asset as a 1bpp sprite with a transparent background
+--   * region refresh -- redrawing only the play area when the sprite moves,
+--     instead of paying for the whole 400x300 panel every frame
+--   * the font and ink settings
 
 local W, H = display.size()
-local count = 0
+
+local SPRITE_W, SPRITE_H = 16, 16
+-- Relative, so the app never needs to know where it was installed. Generated
+-- from sprite.png with scripts/png2bin.py.
+local SPRITE = fs.read("sprite.bin")
+
+-- The area the sprite moves in, and the only part that gets refreshed while it
+-- does. Everything outside keeps whatever the last full frame left there.
+local PLAY = { x = 10, y = 64, w = W - 20, h = 128 }
+
+local sprite = {
+    x = PLAY.x + PLAY.w // 2 - SPRITE_W // 2,
+    y = PLAY.y + PLAY.h // 2 - SPRITE_H // 2,
+}
+local steps = 0
 local lastEvent = "(none yet)"
 
-local function draw()
-    display.clear()
+local STEP = 8
 
-    display.text(12, 18, "Hello", 3)
-    display.rect(12, 50, W - 24, 2, true)
+-- Everything that changes as the sprite moves lives inside the region --
+-- including the readout. Anything drawn outside it would keep the value it had
+-- when the last whole-panel frame ran, and quietly lie.
+local function drawPlayArea()
+    display.rect(PLAY.x, PLAY.y, PLAY.w, PLAY.h)
 
-    display.text(12, 70, "turn the dial or push the stick", 1)
-    display.text(12, 100, tostring(count), 4)
+    if SPRITE then
+        -- No background argument: clear bits are left alone, which is what a
+        -- sprite over existing artwork wants.
+        display.bitmap(sprite.x, sprite.y, SPRITE_W, SPRITE_H, SPRITE)
+    else
+        display.font("default")
+        display.text(PLAY.x + 8, PLAY.y + 8, "sprite.bin missing", 1)
+    end
 
-    -- Every event is echoed, not just the ones this app acts on. A controller
-    -- that works but sends names the app does not know then looks different
-    -- from one that sends nothing at all -- which is the difference between a
-    -- stale copy on the sd card and a wiring fault.
-    display.text(12, H - 52, "last event: " .. lastEvent, 1)
+    display.font("default")
+    display.text(PLAY.x + 8, PLAY.y + PLAY.h - 16,
+        string.format("steps %d   at %d,%d   last %s",
+            steps, sprite.x, sprite.y, lastEvent), 1)
+end
 
+-- Whole panel: chrome plus the play area. Slow (~400ms partial, ~1200ms full),
+-- so it runs on entry and when something outside the play area changes.
+local function drawAll(full)
+    display.begin(full and "full" or "partial")
+
+    display.font("bold")
+    display.text(12, 10, "hello", 2)
+
+    display.font("default")
+    display.text(12, 44, "move with the stick or the dial", 1)
+
+    drawPlayArea()
+
+    -- Static chrome only: this is outside the region the movement refreshes,
+    -- so nothing here may change between whole-panel frames.
+    display.font("default")
     local luaBytes, freeHeap = sys.memory()
-    display.text(12, H - 30, string.format("lua %d B   heap %d B", luaBytes, freeHeap), 1)
-    display.text(12, H - 16, "long-press select / B to exit", 1)
+    display.text(12, H - 30, string.format("lua %d B   heap %d B   last refresh %d ms",
+        luaBytes, freeHeap, display.timing()), 1)
+
+    display.text(12, H - 14, "long-press select / B to exit", 1)
 
     display.show()
 end
 
--- A partial-refresh clear() by default; the periodic full clear lives in the
--- launcher, and a counter demo does not accumulate enough ghosting to need it.
+-- Only the play area. The panel keeps everything outside the region, so the
+-- chrome drawn by drawAll() stays on screen without being redrawn.
+local function drawMove()
+    display.begin("partial", PLAY.x, PLAY.y, PLAY.w, PLAY.h)
+    drawPlayArea()
+    display.show()
+end
 
-draw()
+local function move(dx, dy)
+    local x = sprite.x + dx * STEP
+    local y = sprite.y + dy * STEP
 
--- Event names carry their source (rotary_* / gamepad_*); this demo listens to
--- both controllers.
-local UP = { rotary_cw = true, rotary_up = true, gamepad_up = true }
-local DOWN = { rotary_ccw = true, rotary_down = true, gamepad_down = true }
+    -- Clamp inside the play area, one pixel in from its outline.
+    if x < PLAY.x + 2 then x = PLAY.x + 2 end
+    if y < PLAY.y + 2 then y = PLAY.y + 2 end
+    if x > PLAY.x + PLAY.w - SPRITE_W - 2 then x = PLAY.x + PLAY.w - SPRITE_W - 2 end
+    if y > PLAY.y + PLAY.h - SPRITE_H - 2 then y = PLAY.y + PLAY.h - SPRITE_H - 2 end
+
+    if x == sprite.x and y == sprite.y then
+        return false
+    end
+
+    sprite.x, sprite.y = x, y
+    steps = steps + 1
+    return true
+end
+
+-- Event names carry their source (rotary_* / gamepad_*); this listens to both.
+local MOVES = {
+    rotary_up = { 0, -1 }, rotary_down = { 0, 1 },
+    rotary_left = { -1, 0 }, rotary_right = { 1, 0 },
+    rotary_cw = { 1, 0 }, rotary_ccw = { -1, 0 },
+    gamepad_up = { 0, -1 }, gamepad_down = { 0, 1 },
+    gamepad_left = { -1, 0 }, gamepad_right = { 1, 0 },
+}
 local EXIT = { rotary_select_long = true, gamepad_b = true }
+
+drawAll(true)
 
 while true do
     local event = input.read(30000)
@@ -47,16 +123,18 @@ while true do
         lastEvent = event
     end
 
-    if UP[event] then
-        count = count + 1
-        draw()
-    elseif DOWN[event] then
-        count = count - 1
-        draw()
-    elseif EXIT[event] then
-        -- Simply return: the host restarts the launcher for us.
-        return
+    if EXIT[event] then
+        return  -- the host restarts the launcher for us
+    elseif MOVES[event] then
+        local delta = MOVES[event]
+        if move(delta[1], delta[2]) then
+            drawMove()
+        end
     elseif event then
-        draw()  -- unknown event: show what did arrive
+        -- Every event is echoed, not just the ones this app acts on. A
+        -- controller that works but sends names the app does not know then
+        -- looks different from one that sends nothing at all -- which is the
+        -- difference between a stale copy on the card and a wiring fault.
+        drawAll(false)
     end
 end

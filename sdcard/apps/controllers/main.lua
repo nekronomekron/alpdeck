@@ -16,7 +16,7 @@ local W, H = display.size()
 -- The bindings this app needs postdate the first firmware that shipped apps.
 -- Saying so beats drawing a screen where nothing ever lights up.
 if type(input.state) ~= "function" or type(display.circle) ~= "function" then
-    display.clear(true)
+    display.begin("full")
     display.text(12, 30, "firmware too old", 2)
     display.text(12, 66, "this app needs input.state() and", 1)
     display.text(12, 80, "display.circle(), added with the", 1)
@@ -77,10 +77,18 @@ local NAV_SWITCHES = {
 
 -- ------------------------------------------------------------------ drawing
 
--- Default 5x7 font on a 6x8 cell: half of that is the offset from a centre.
+-- Centres a label on a point. measure() rather than a hardcoded cell width, so
+-- this keeps working if the font ever changes.
 local function centered(cx, cy, text, size, invert)
     size = size or 1
-    display.text(cx - #text * 3 * size, cy - 4 * size, text, size, invert)
+    local w, h = display.measure(text, size)
+    if invert then
+        display.color("white")
+    end
+    display.text(cx - w // 2, cy - h // 2, text, size)
+    if invert then
+        display.color("black")
+    end
 end
 
 local function arrow(cx, cy, dir, size, filled)
@@ -205,7 +213,7 @@ local refreshes = 0
 
 local function draw(state, spin)
     refreshes = refreshes + 1
-    display.clear(refreshes % FULL_REFRESH_EVERY == 1)
+    display.begin(refreshes % FULL_REFRESH_EVERY == 1 and "full" or "partial")
 
     display.text(12, 8, "controller test", 2)
     display.rect(0, HEADER_RULE_Y, W, 2, true)

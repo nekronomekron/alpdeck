@@ -27,9 +27,25 @@ void drawPartialWindow(int16_t x, int16_t y, int16_t w, int16_t h,
 // full 300 rows, so endFrame()'s single nextPage() flushes everything. A
 // smaller MAX_DISPLAY_BUFFER_SIZE would silently render only the top slice and
 // this would need to become a real paged loop again.
-void beginFrame(bool partial = false);
+enum class RefreshMode : uint8_t {
+    Partial,  // ~400ms, leaves faint ghosting
+    Full,     // ~1200ms, clears it
+};
+
+void beginFrame(RefreshMode mode = RefreshMode::Partial);
+
+// Frame bound to a rectangle: drawing is clipped to it and endFrame() pushes
+// only that area. Always a partial refresh -- a full refresh drives the whole
+// panel by nature, so a region would be a lie.
+void beginFrame(int16_t x, int16_t y, int16_t w, int16_t h);
+
 void endFrame();
 bool frameOpen();
+
+// How long the last endFrame() took, in milliseconds. The refresh is
+// synchronous, so this is the real cost an app has to budget for; there is no
+// asynchronous state to poll.
+uint32_t lastRefreshMs();
 
 Adafruit_GFX& canvas();
 

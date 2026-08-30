@@ -91,6 +91,15 @@ LuaWrapper::LuaWrapper() {
     openLibrary(_state, LUA_STRLIBNAME, luaopen_string);
     openLibrary(_state, LUA_MATHLIBNAME, luaopen_math);
 
+    // luaopen_base also installs dofile and loadfile, which reach C stdio
+    // rather than the fs bindings. Both LittleFS and the SD card are mounted
+    // into the ESP VFS, so they are a way around the path sandbox that nothing
+    // else checks. Remove them: fs.* is the only route to storage.
+    lua_pushnil(_state);
+    lua_setglobal(_state, "dofile");
+    lua_pushnil(_state);
+    lua_setglobal(_state, "loadfile");
+
     lua_register(_state, "print", lua_wrapper_print);
 
     // Set as real globals rather than prepended to the source. The old wrapper
