@@ -13,7 +13,9 @@
 #include "net/Network.h"
 #include "core/Vfs.h"
 
+namespace LuaBindings {
 namespace {
+
 String sandboxRoot;
 String launchRequest;
 
@@ -279,7 +281,7 @@ int l_fs_list(lua_State* L) {
 
     File dir = fs.open(localPath);
     if (!dir || !dir.isDirectory()) {
-        LOGW(LuaBindings::kLogTag, "fs.list('%s') -> %s:'%s' not a directory (open=%d)",
+        LOGW(kLogTag, "fs.list('%s') -> %s:'%s' not a directory (open=%d)",
              path.c_str(), onSd ? "SD" : "LittleFS", localPath.c_str(),
              static_cast<bool>(dir));
         lua_pushnil(L);
@@ -315,7 +317,7 @@ int l_fs_list(lua_State* L) {
     }
     dir.close();
 
-    LOGD(LuaBindings::kLogTag, "fs.list('%s') -> %s:'%s' : %d entries",
+    LOGD(kLogTag, "fs.list('%s') -> %s:'%s' : %d entries",
          path.c_str(), onSd ? "SD" : "LittleFS", localPath.c_str(),
          static_cast<int>(index - 1));
     return 1;
@@ -353,7 +355,7 @@ int l_fs_exists(lua_State* L) {
     String localPath;
     fs::FS& fs = Vfs::resolve(path, localPath);
     const bool exists = fs.exists(localPath);
-    LOGD(LuaBindings::kLogTag, "fs.exists('%s') -> %s:'%s' = %d", path.c_str(),
+    LOGD(kLogTag, "fs.exists('%s') -> %s:'%s' = %d", path.c_str(),
          &fs == &SD ? "SD" : "LittleFS", localPath.c_str(), exists);
     lua_pushboolean(L, exists);
     return 1;
@@ -563,7 +565,7 @@ const luaL_Reg kSys[] = {
 };
 }  // namespace
 
-void LuaBindings::install(LuaWrapper& wrapper) {
+void install(LuaWrapper& wrapper) {
     lua_State* L = wrapper.state();
     if (L == nullptr) {
         return;
@@ -577,12 +579,14 @@ void LuaBindings::install(LuaWrapper& wrapper) {
     installTable(L, "sys", kSys);
 }
 
-void LuaBindings::setSandboxRoot(const String& root) { sandboxRoot = root; }
+void setSandboxRoot(const String& root) { sandboxRoot = root; }
 
-String LuaBindings::takeLaunchRequest() {
+String takeLaunchRequest() {
     const String request = launchRequest;
     launchRequest = "";
     return request;
 }
 
-bool LuaBindings::hasLaunchRequest() { return !launchRequest.isEmpty(); }
+bool hasLaunchRequest() { return !launchRequest.isEmpty(); }
+
+}  // namespace LuaBindings

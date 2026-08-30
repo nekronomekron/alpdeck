@@ -4,40 +4,26 @@
 
 #include <functional>
 
-class Network {
-public:
-    static constexpr const char* kLogTag = "Network";
+namespace Network {
 
-    // Never blocks. Starts connecting when credentials are stored, otherwise
-    // raises the setup portal, and returns either way.
-    static void init();
+constexpr const char* kLogTag = "Network";
 
-    // Drives the connect state machine and the portal. Call from loop().
-    static void loop();
+// Never blocks. Starts connecting when credentials are stored, otherwise
+// raises the setup portal, and returns either way.
+void init();
 
-    static bool isConnected();
-    static bool isPortalActive();
+// Drives the connect state machine and the portal. Call from loop().
+void loop();
 
-    // Fired once per transition, including when credentials first arrive at
-    // runtime via the portal. Register before init().
-    static void onConnected(std::function<void()> callback);
-    static void onDisconnected(std::function<void()> callback);
+bool isConnected();
+bool isPortalActive();
 
-    // Forgets the stored network and raises the portal.
-    static void forget();
+// Fired once per transition, including when credentials first arrive at
+// runtime via the portal. Register before init().
+void onConnected(std::function<void()> callback);
+void onDisconnected(std::function<void()> callback);
 
-private:
-    enum class State { Idle, Connecting, Connected, Portal };
+// Forgets the stored network and raises the portal.
+void forget();
 
-    static void startConnect(const String& ssid, const String& password);
-    static void startPortal();
-    static void applyCredentials(const String& ssid, const String& password);
-    static String statusJson();
-    static void setConnected(bool connected);
-
-    static State _state;
-    static bool _lastAttemptFailed;
-    static unsigned long _connectStartedMs;
-    static std::function<void()> _onConnected;
-    static std::function<void()> _onDisconnected;
-};
+}  // namespace Network

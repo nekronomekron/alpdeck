@@ -4,10 +4,13 @@
 
 #include "config/AppConfig.h"
 #include "peripherals/GamepadController.h"
-#include "utils/Logger.h"
 #include "peripherals/RotaryController.h"
+#include "utils/Logger.h"
+
+namespace Input {
 
 namespace {
+
 RotaryController rotary;
 GamepadController gamepad;
 QueueHandle_t events = nullptr;
@@ -18,11 +21,25 @@ constexpr uint8_t kQueueLength = 16;
 // The spinlock keeps a reader from seeing half of an update; the struct is a
 // few dozen bytes, so the critical section stays far shorter than one I2C
 // transaction.
-Input::Snapshot latest;
+Snapshot latest;
 portMUX_TYPE latestMux = portMUX_INITIALIZER_UNLOCKED;
+
+// Queues one event for whichever task is reading. Handed to the drivers as a
+// callback, so it has to exist before poll() uses it.
+void publish(Event event) {
+    if (events == nullptr) {
+        return;
+    }
+    // Drop rather than block: input is worthless once it is stale, and the main
+    // loop must never wait on a Lua app that has stopped reading.
+    if (xQueueSend(events, &event, 0) != pdPASS) {
+        LOGD(kLogTag, "Event queue full, dropped %s", eventName(event));
+    }
+}
+
 }  // namespace
 
-bool Input::init() {
+bool init() {
     events = xQueueCreate(kQueueLength, sizeof(Event));
     if (events == nullptr) {
         LOGE(kLogTag, "Could not allocate the event queue");
@@ -44,24 +61,13 @@ bool Input::init() {
     return true;
 }
 
-bool Input::isAvailable() { return hasRotary() || hasGamepad(); }
+bool isAvailable() { return hasRotary() || hasGamepad(); }
 
-bool Input::hasRotary() { return rotary.available(); }
+bool hasRotary() { return rotary.available(); }
 
-bool Input::hasGamepad() { return gamepad.available(); }
+bool hasGamepad() { return gamepad.available(); }
 
-void Input::publish(Event event) {
-    if (events == nullptr) {
-        return;
-    }
-    // Drop rather than block: input is worthless once it is stale, and the main
-    // loop must never wait on a Lua app that has stopped reading.
-    if (xQueueSend(events, &event, 0) != pdPASS) {
-        LOGD(kLogTag, "Event queue full, dropped %s", eventName(event));
-    }
-}
-
-void Input::poll() {
+void poll() {
     const uint32_t nowMs = millis();
     rotary.poll(nowMs, publish);
     gamepad.poll(nowMs, publish);
@@ -99,14 +105,14 @@ void Input::poll() {
     portEXIT_CRITICAL(&latestMux);
 }
 
-Input::Snapshot Input::snapshot() {
+Snapshot snapshot() {
     portENTER_CRITICAL(&latestMux);
     const Snapshot copy = latest;
     portEXIT_CRITICAL(&latestMux);
     return copy;
 }
 
-Input::Event Input::read(uint32_t timeoutMs) {
+Event read(uint32_t timeoutMs) {
     Event event = Event::None;
     if (events == nullptr) {
         return event;
@@ -115,13 +121,13 @@ Input::Event Input::read(uint32_t timeoutMs) {
     return event;
 }
 
-void Input::flush() {
+void flush() {
     if (events != nullptr) {
         xQueueReset(events);
     }
 }
 
-const char* Input::eventName(Event event) {
+const char* eventName(Event event) {
     switch (event) {
     case Event::RotaryCw:
         return "rotary_cw";
@@ -163,3 +169,5 @@ const char* Input::eventName(Event event) {
         return "none";
     }
 }
+
+}  // namespace Input

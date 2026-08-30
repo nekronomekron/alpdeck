@@ -16,11 +16,11 @@ public:
     void drawError(Adafruit_GFX& gfx, const char* message);
 
 private:
-    int16_t _w, _h;
-    uint16_t _black, _white;
+    int16_t width_, height_;
+    uint16_t black_, white_;
 
-    int16_t cx() const { return _w / 2; }
-    int16_t base() const { return (int16_t)((int32_t)_h * 38 / 100); }
+    int16_t cx() const { return width_ / 2; }
+    int16_t base() const { return (int16_t)((int32_t)height_ * 38 / 100); }
 
     void drawLogo(Adafruit_GFX& gfx);
     void drawWarningSign(Adafruit_GFX& gfx, int16_t x, int16_t y);

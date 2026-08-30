@@ -4,7 +4,7 @@
 
 #include "config/AppConfig.h"
 #include "peripherals/Display.h"
-#include "net/DynamicFTPServer.h"
+#include "net/FtpService.h"
 #include "peripherals/Input.h"
 #include "utils/Logger.h"
 #include "core/lua/LuaBindings.h"
@@ -212,8 +212,8 @@ void setup() {
     // FTP only exists once there's a network to serve it on, so it is started
     // from the connect callback rather than here — that covers both a boot-time
     // auto-connect and credentials arriving later via the setup portal.
-    Network::onConnected([]() { DynamicFTPServer::init(sdMounted); });
-    Network::onDisconnected(DynamicFTPServer::shutdown);
+    Network::onConnected([]() { FtpService::start(sdMounted); });
+    Network::onDisconnected(FtpService::stop);
     Network::init();
 
     if (!LuaHost::init()) {
@@ -241,7 +241,7 @@ void loop() {
     static uint32_t pressStart = 0;
 
     Network::loop();
-    DynamicFTPServer::loop();
+    FtpService::loop();
     Input::poll();
     LuaHost::loop();
 

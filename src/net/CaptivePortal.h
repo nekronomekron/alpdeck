@@ -5,37 +5,27 @@
 #include <functional>
 
 // AP-mode setup portal: soft AP, wildcard DNS and a small web UI for picking a
-// network. Owns no WiFi credentials itself — submissions are handed to the
+// network. Owns no WiFi credentials itself -- submissions are handed to the
 // onSubmit callback, and it renders whatever onStatus reports back.
-class CaptivePortal {
-public:
-    static constexpr const char* kLogTag = "Portal";
+namespace CaptivePortal {
 
-    // Raises the AP and starts serving. Non-blocking; drive it with loop().
-    // Pass an empty password for an open AP.
-    static void begin(const char* apSsid, const char* apPassword = "");
-    static void stop();
+constexpr const char* kLogTag = "Portal";
 
-    // Services DNS and HTTP. Call from loop() while active.
-    static void loop();
+// Raises the AP and starts serving. Non-blocking; drive it with loop().
+// Pass an empty password for an open AP.
+void begin(const char* apSsid, const char* apPassword = "");
+void stop();
 
-    static bool isActive();
+// Services DNS and HTTP. Call from loop() while active.
+void loop();
 
-    // Invoked with the credentials the user submitted.
-    static void onSubmit(std::function<void(const String&, const String&)> cb);
+bool isActive();
 
-    // Must return a JSON object describing the current connection state; it is
-    // polled by the portal page after a submit.
-    static void onStatus(std::function<String()> cb);
+// Invoked with the credentials the user submitted.
+void onSubmit(std::function<void(const String&, const String&)> cb);
 
-private:
-    static void handleRoot();
-    static void handleScan();
-    static void handleSave();
-    static void handleStatus();
-    static void handleRedirect();
+// Must return a JSON object describing the current connection state; it is
+// polled by the portal page after a submit.
+void onStatus(std::function<String()> cb);
 
-    static bool _active;
-    static std::function<void(const String&, const String&)> _onSubmit;
-    static std::function<String()> _onStatus;
-};
+}  // namespace CaptivePortal

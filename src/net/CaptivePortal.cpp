@@ -11,6 +11,7 @@
 #include "utils/Logger.h"
 #include "utils/JsonUtil.h"
 
+namespace CaptivePortal {
 namespace {
 DNSServer dns;
 WebServer server(80);
@@ -94,90 +95,14 @@ ST.textContent='could not connect. check the password and try again.'}
 else{ST.textContent='connecting...'}})}
 scan();
 </script></body></html>)HTML";
-}  // namespace
 
-bool CaptivePortal::_active = false;
-std::function<void(const String&, const String&)> CaptivePortal::_onSubmit;
-std::function<String()> CaptivePortal::_onStatus;
+bool active = false;
+std::function<void(const String&, const String&)> submitCallback;
+std::function<String()> statusCallback;
 
-void CaptivePortal::begin(const char* apSsid, const char* apPassword) {
-    if (_active) {
-        return;
-    }
-
-    // AP_STA rather than AP: the station interface is what scans, and dropping
-    // it would leave the portal unable to list any networks.
-    WiFi.mode(WIFI_AP_STA);
-    const bool open = apPassword == nullptr || strlen(apPassword) == 0;
-    WiFi.softAP(apSsid, open ? nullptr : apPassword);
-
-    const IPAddress ip = WiFi.softAPIP();
-
-    // Wildcard DNS: every lookup resolves here, which is what makes the OS
-    // captive-portal probes fail and trigger the sign-in sheet.
-    dns.setErrorReplyCode(DNSReplyCode::NoError);
-    dns.start(kDnsPort, "*", ip);
-
-    server.on("/", HTTP_GET, handleRoot);
-    server.on("/scan", HTTP_GET, handleScan);
-    server.on("/save", HTTP_POST, handleSave);
-    server.on("/status", HTTP_GET, handleStatus);
-
-    // Probe URLs the major platforms fetch to decide whether a network is
-    // captive. Answering with a redirect is what pops the login sheet.
-    server.on("/generate_204", HTTP_GET, handleRedirect);   // Android
-    server.on("/gen_204", HTTP_GET, handleRedirect);        // Android
-    server.on("/hotspot-detect.html", HTTP_GET, handleRedirect);  // Apple
-    server.on("/library/test/success.html", HTTP_GET, handleRedirect);
-    server.on("/ncsi.txt", HTTP_GET, handleRedirect);       // Windows
-    server.on("/connecttest.txt", HTTP_GET, handleRedirect);
-    server.on("/fwlink", HTTP_GET, handleRedirect);
-    server.onNotFound(handleRedirect);
-
-    server.begin();
-    _active = true;
-
-    // Kick off a scan so the first page load usually has results ready.
-    WiFi.scanNetworks(true);
-
-    LOGI(kLogTag, "Portal up: SSID '%s'%s at %s", apSsid,
-         open ? " (open)" : "", ip.toString().c_str());
-}
-
-void CaptivePortal::stop() {
-    if (!_active) {
-        return;
-    }
-
-    server.stop();
-    dns.stop();
-    WiFi.softAPdisconnect(true);
-    WiFi.mode(WIFI_STA);
-    _active = false;
-
-    LOGI(kLogTag, "Portal stopped");
-}
-
-void CaptivePortal::loop() {
-    if (!_active) {
-        return;
-    }
-    dns.processNextRequest();
-    server.handleClient();
-}
-
-bool CaptivePortal::isActive() { return _active; }
-
-void CaptivePortal::onSubmit(
-    std::function<void(const String&, const String&)> cb) {
-    _onSubmit = std::move(cb);
-}
-
-void CaptivePortal::onStatus(std::function<String()> cb) {
-    _onStatus = std::move(cb);
-}
-
-void CaptivePortal::handleRoot() {
+// Request handlers. Defined here rather than after begin() because begin() is
+// what registers them with the web server.
+void handleRoot() {
     // Substituted per request rather than baked in: the page is the only place
     // the branding appears outside the bootscreen, and both read AppConfig.
     String page = FPSTR(kPageHtml);
@@ -186,7 +111,7 @@ void CaptivePortal::handleRoot() {
     server.send(200, "text/html", page);
 }
 
-void CaptivePortal::handleScan() {
+void handleScan() {
     const int16_t status = WiFi.scanComplete();
 
     if (status == WIFI_SCAN_RUNNING) {
@@ -253,7 +178,7 @@ void CaptivePortal::handleScan() {
     server.send(200, "application/json", out);
 }
 
-void CaptivePortal::handleSave() {
+void handleSave() {
     const String ssid = server.arg("s");
     const String password = server.arg("p");
 
@@ -265,18 +190,100 @@ void CaptivePortal::handleSave() {
     server.send(200, "text/plain", "ok");
     LOGI(kLogTag, "Credentials submitted for '%s'", ssid.c_str());
 
-    if (_onSubmit) {
-        _onSubmit(ssid, password);
+    if (submitCallback) {
+        submitCallback(ssid, password);
     }
 }
 
-void CaptivePortal::handleStatus() {
+void handleStatus() {
     server.send(200, "application/json",
-                _onStatus ? _onStatus() : String("{\"state\":\"unknown\"}"));
+                statusCallback ? statusCallback() : String("{\"state\":\"unknown\"}"));
 }
 
-void CaptivePortal::handleRedirect() {
+void handleRedirect() {
     server.sendHeader("Location",
                       "http://" + WiFi.softAPIP().toString() + "/", true);
     server.send(302, "text/plain", "");
 }
+
+}  // namespace
+
+
+void begin(const char* apSsid, const char* apPassword) {
+    if (active) {
+        return;
+    }
+
+    // AP_STA rather than AP: the station interface is what scans, and dropping
+    // it would leave the portal unable to list any networks.
+    WiFi.mode(WIFI_AP_STA);
+    const bool open = apPassword == nullptr || strlen(apPassword) == 0;
+    WiFi.softAP(apSsid, open ? nullptr : apPassword);
+
+    const IPAddress ip = WiFi.softAPIP();
+
+    // Wildcard DNS: every lookup resolves here, which is what makes the OS
+    // captive-portal probes fail and trigger the sign-in sheet.
+    dns.setErrorReplyCode(DNSReplyCode::NoError);
+    dns.start(kDnsPort, "*", ip);
+
+    server.on("/", HTTP_GET, handleRoot);
+    server.on("/scan", HTTP_GET, handleScan);
+    server.on("/save", HTTP_POST, handleSave);
+    server.on("/status", HTTP_GET, handleStatus);
+
+    // Probe URLs the major platforms fetch to decide whether a network is
+    // captive. Answering with a redirect is what pops the login sheet.
+    server.on("/generate_204", HTTP_GET, handleRedirect);   // Android
+    server.on("/gen_204", HTTP_GET, handleRedirect);        // Android
+    server.on("/hotspot-detect.html", HTTP_GET, handleRedirect);  // Apple
+    server.on("/library/test/success.html", HTTP_GET, handleRedirect);
+    server.on("/ncsi.txt", HTTP_GET, handleRedirect);       // Windows
+    server.on("/connecttest.txt", HTTP_GET, handleRedirect);
+    server.on("/fwlink", HTTP_GET, handleRedirect);
+    server.onNotFound(handleRedirect);
+
+    server.begin();
+    active = true;
+
+    // Kick off a scan so the first page load usually has results ready.
+    WiFi.scanNetworks(true);
+
+    LOGI(kLogTag, "Portal up: SSID '%s'%s at %s", apSsid,
+         open ? " (open)" : "", ip.toString().c_str());
+}
+
+void stop() {
+    if (!active) {
+        return;
+    }
+
+    server.stop();
+    dns.stop();
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_STA);
+    active = false;
+
+    LOGI(kLogTag, "Portal stopped");
+}
+
+void loop() {
+    if (!active) {
+        return;
+    }
+    dns.processNextRequest();
+    server.handleClient();
+}
+
+bool isActive() { return active; }
+
+void onSubmit(
+    std::function<void(const String&, const String&)> cb) {
+    submitCallback = std::move(cb);
+}
+
+void onStatus(std::function<String()> cb) {
+    statusCallback = std::move(cb);
+}
+
+}  // namespace CaptivePortal

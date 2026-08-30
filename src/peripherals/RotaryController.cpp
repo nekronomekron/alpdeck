@@ -26,7 +26,7 @@ const SeesawButtons::Button kButtons[] = {
 }  // namespace
 
 bool RotaryController::begin() {
-    if (!_device.begin(Config::ROTARY_I2C_ADDRESS)) {
+    if (!device_.begin(Config::ROTARY_I2C_ADDRESS)) {
         LOGI(kLogTag, "No rotary controller at 0x%02X",
              Config::ROTARY_I2C_ADDRESS);
         return false;
@@ -34,17 +34,17 @@ bool RotaryController::begin() {
 
     // Guards against a seesaw board of a different product answering on the
     // same address: the pin map would be wrong for it.
-    const uint16_t product = (_device.getVersion() >> 16) & 0xFFFF;
+    const uint16_t product = (device_.getVersion() >> 16) & 0xFFFF;
     if (product != Config::ROTARY_PRODUCT_ID) {
         LOGE(kLogTag, "Found seesaw product %u at 0x%02X, expected %u", product,
              Config::ROTARY_I2C_ADDRESS, Config::ROTARY_PRODUCT_ID);
         return false;
     }
 
-    _buttons.begin(_device, kButtons, sizeof(kButtons) / sizeof(kButtons[0]));
-    _device.enableEncoderInterrupt();
+    buttons_.begin(device_, kButtons, sizeof(kButtons) / sizeof(kButtons[0]));
+    device_.enableEncoderInterrupt();
 
-    _available = true;
+    available_ = true;
     LOGI(kLogTag, "Ready at 0x%02X (product %u)", Config::ROTARY_I2C_ADDRESS,
          product);
     return true;
@@ -52,30 +52,30 @@ bool RotaryController::begin() {
 
 RotaryController::State RotaryController::state() const {
     State state;
-    if (!_available) {
+    if (!available_) {
         return state;  // absent controller reads as "nothing held"
     }
 
-    state.select = _buttons.pressed(kSelect);
-    state.up = _buttons.pressed(kUp);
-    state.left = _buttons.pressed(kLeft);
-    state.down = _buttons.pressed(kDown);
-    state.right = _buttons.pressed(kRight);
-    state.encoder = _encoder;
+    state.select = buttons_.pressed(kSelect);
+    state.up = buttons_.pressed(kUp);
+    state.left = buttons_.pressed(kLeft);
+    state.down = buttons_.pressed(kDown);
+    state.right = buttons_.pressed(kRight);
+    state.encoder = encoder_;
     return state;
 }
 
 void RotaryController::poll(uint32_t nowMs, SeesawButtons::PublishFn publish) {
-    if (!_available) {
+    if (!available_) {
         return;
     }
 
     // Deltas accumulate on the seesaw, so a slow poll loses no detents.
-    const int32_t delta = _device.getEncoderDelta();
+    const int32_t delta = device_.getEncoderDelta();
     if (delta != 0) {
         // Also kept as an absolute position: an event stream cannot show an
         // app how far the dial has travelled, only that it moved.
-        _encoder += delta;
+        encoder_ += delta;
 
         const Input::Event event =
             delta > 0 ? Input::Event::RotaryCw : Input::Event::RotaryCcw;
@@ -84,5 +84,5 @@ void RotaryController::poll(uint32_t nowMs, SeesawButtons::PublishFn publish) {
         }
     }
 
-    _buttons.poll(nowMs, publish);
+    buttons_.poll(nowMs, publish);
 }

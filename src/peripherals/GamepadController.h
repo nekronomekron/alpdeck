@@ -16,7 +16,7 @@ public:
     // product; the rest of the system carries on without it.
     bool begin();
 
-    bool available() const { return _available; }
+    bool available() const { return available_; }
 
     // Level-triggered view of the controller, for apps that need to know what
     // is held right now rather than what changed. Filled by poll(), so reading
@@ -45,6 +45,8 @@ public:
 
 private:
     // One stick axis digitised to a direction: -1, 0 or +1.
+    // Kept an aggregate on purpose: begin() assigns it with brace
+    // initialisation, which default member initialisers would forbid here.
     struct Axis {
         uint8_t pin;
         bool invert;
@@ -57,9 +59,12 @@ private:
 
     void pollAxis(Axis& axis, SeesawButtons::PublishFn publish);
 
-    Adafruit_seesaw _device{&Wire};
-    SeesawButtons _buttons;
-    Axis _axisX;
-    Axis _axisY;
-    bool _available = false;
+    Adafruit_seesaw device_{&Wire};
+    SeesawButtons buttons_;
+    // Value-initialised: begin() fills these in, but it returns early when no
+    // gamepad answers, and an absent controller must read as a centred stick
+    // rather than as whatever happened to be in memory.
+    Axis axisX_{};
+    Axis axisY_{};
+    bool available_ = false;
 };

@@ -3,15 +3,20 @@
 #include "config/AppConfig.h"
 #include "utils/Logger.h"
 
+namespace Display {
 namespace {
+
 GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)>
-    display(GxEPD2_DRIVER_CLASS(Config::DISPLAY_PIN_CS, Config::DISPLAY_PIN_DC,
-                                Config::DISPLAY_PIN_RST,
-                                Config::DISPLAY_PIN_BUSY));
+    panel(GxEPD2_DRIVER_CLASS(Config::DISPLAY_PIN_CS, Config::DISPLAY_PIN_DC,
+                              Config::DISPLAY_PIN_RST,
+                              Config::DISPLAY_PIN_BUSY));
+
+bool frameIsOpen = false;
+
 }  // namespace
 
-void Display::init() {
-    LOGI(Display::kLogTag, "Initializing display");
+void init() {
+    LOGI(kLogTag, "Initializing display");
 
     SPI.begin(Config::DISPLAY_PIN_SCK, Config::DISPLAY_PIN_MISO,
               Config::DISPLAY_PIN_MOSI, Config::DISPLAY_PIN_CS);
@@ -24,73 +29,72 @@ void Display::init() {
     pinMode(Config::DISPLAY_PIN_DC, OUTPUT);
     pinMode(Config::DISPLAY_PIN_RST, OUTPUT);
 
-    display.init(115200, true, 2, false);
-    display.setRotation(0);
+    panel.init(115200, true, 2, false);
+    panel.setRotation(0);
 }
 
-void Display::shutdown() {
-    LOGI(Display::kLogTag, "Shutting down display");
+void shutdown() {
+    LOGI(kLogTag, "Shutting down display");
 
     drawFullWindow([](Adafruit_GFX& gfx) { gfx.fillScreen(kWhite); });
 
-    display.powerOff();
-    display.hibernate();
+    panel.powerOff();
+    panel.hibernate();
 }
 
-void Display::drawFullWindow(std::function<void(Adafruit_GFX&)> drawFunction) {
-    display.setFullWindow();
-    display.firstPage();
+void drawFullWindow(std::function<void(Adafruit_GFX&)> drawFunction) {
+    panel.setFullWindow();
+    panel.firstPage();
     do {
-        drawFunction(display);
-    } while (display.nextPage());
+        drawFunction(panel);
+    } while (panel.nextPage());
 
-    display.hibernate();
+    panel.hibernate();
 }
 
-void Display::drawPartialWindow(
-    int16_t x, int16_t y, int16_t w, int16_t h,
-    std::function<void(Adafruit_GFX&)> drawFunction) {
-    display.setPartialWindow(x, y, w, h);
-    display.firstPage();
+void drawPartialWindow(int16_t x, int16_t y, int16_t w, int16_t h,
+                       std::function<void(Adafruit_GFX&)> drawFunction) {
+    panel.setPartialWindow(x, y, w, h);
+    panel.firstPage();
     do {
-        drawFunction(display);
-    } while (display.nextPage());
+        drawFunction(panel);
+    } while (panel.nextPage());
 
-    display.hibernate();
+    panel.hibernate();
 }
 
-bool Display::_frameOpen = false;
-
-void Display::beginFrame(bool partial) {
-    if (_frameOpen) {
+void beginFrame(bool partial) {
+    if (frameIsOpen) {
         return;  // already drawing; keep the caller's existing frame
     }
 
     if (partial) {
-        display.setPartialWindow(0, 0, display.width(), display.height());
+        panel.setPartialWindow(0, 0, panel.width(), panel.height());
     } else {
-        display.setFullWindow();
+        panel.setFullWindow();
     }
 
-    display.firstPage();
-    _frameOpen = true;
+    panel.firstPage();
+    frameIsOpen = true;
 }
 
-void Display::endFrame() {
-    if (!_frameOpen) {
+void endFrame() {
+    if (!frameIsOpen) {
         return;
     }
-    _frameOpen = false;
+    frameIsOpen = false;
 
     // One page covers the panel, so this single call renders the whole frame.
-    display.nextPage();
-    display.hibernate();
+    panel.nextPage();
+    panel.hibernate();
 }
 
-bool Display::frameOpen() { return _frameOpen; }
+bool frameOpen() { return frameIsOpen; }
 
-Adafruit_GFX& Display::canvas() { return display; }
+Adafruit_GFX& canvas() { return panel; }
 
-int16_t Display::width() { return display.width(); }
+int16_t width() { return panel.width(); }
 
-int16_t Display::height() { return display.height(); }
+int16_t height() { return panel.height(); }
+
+}  // namespace Display

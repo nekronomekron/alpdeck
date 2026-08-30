@@ -51,21 +51,22 @@ class LuaWrapper;
 //
 // The base library is opened without io, os or package, so fs.* is the only
 // route to storage and every path passes through the sandbox check here.
-class LuaBindings {
-public:
-    static constexpr const char* kLogTag = "LuaApi";
+namespace LuaBindings {
 
-    // Registers every table into the wrapper's state. Call once per launch,
-    // before running the script.
-    static void install(LuaWrapper& wrapper);
+constexpr const char* kLogTag = "LuaApi";
 
-    // Set by the host before a launch: fs writes are confined to this directory
-    // and reads to it plus the shared read-only roots. Empty disables the
-    // restriction, which the launcher needs to browse /sd/apps.
-    static void setSandboxRoot(const String& root);
+// Registers every table into the wrapper's state. Call once per launch, before
+// running the script.
+void install(LuaWrapper& wrapper);
 
-    // Consumed by the host after a script exits: a script that called
-    // sys.launch() names the next app here.
-    static String takeLaunchRequest();
-    static bool hasLaunchRequest();
-};
+// Set by the host before a launch: fs writes are confined to this directory and
+// reads to it plus the shared read-only roots. Empty disables the restriction,
+// which the launcher needs to browse /sd/apps.
+void setSandboxRoot(const String& root);
+
+// Consumed by the host after a script exits: a script that called sys.launch()
+// names the next app here.
+String takeLaunchRequest();
+bool hasLaunchRequest();
+
+}  // namespace LuaBindings

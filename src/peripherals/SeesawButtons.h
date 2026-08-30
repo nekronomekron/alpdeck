@@ -33,7 +33,7 @@ public:
     // begin(). Returns what the last poll() left behind and touches no I2C, so
     // it is safe to read from a task that does not own the bus.
     bool pressed(size_t index) const {
-        return index < _count && _states[index].pressed;
+        return index < count_ && states_[index].pressed;
     }
 
 private:
@@ -45,9 +45,9 @@ private:
         bool longFired = false;
     };
 
-    Adafruit_seesaw* _device = nullptr;
-    const Button* _buttons = nullptr;
-    size_t _count = 0;
-    uint32_t _mask = 0;
-    State _states[kMaxButtons];
+    Adafruit_seesaw* device_ = nullptr;
+    const Button* buttons_ = nullptr;
+    size_t count_ = 0;
+    uint32_t mask_ = 0;
+    State states_[kMaxButtons];
 };

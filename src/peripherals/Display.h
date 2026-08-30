@@ -5,39 +5,35 @@
 
 #include <functional>
 
-class Display {
-public:
-    static constexpr const char* kLogTag = "Display";
+namespace Display {
 
-    static void init();
+constexpr const char* kLogTag = "Display";
 
-    static void shutdown();
+constexpr uint16_t kBlack = 0x0000;
+constexpr uint16_t kWhite = 0xFFFF;
 
-    static void drawFullWindow(std::function<void(Adafruit_GFX&)> drawFunction);
-    static void drawPartialWindow(
-        int16_t x, int16_t y, int16_t w, int16_t h,
-        std::function<void(Adafruit_GFX&)> drawFunction);
+void init();
+void shutdown();
 
-    // Immediate-mode frame, for callers that cannot draw from inside a
-    // callback -- notably the Lua bindings, where invoking a script from within
-    // the paged loop could longjmp straight through it on error.
-    //
-    // Safe here only because the panel fits one page: MAX_HEIGHT resolves to
-    // the full 300 rows, so endFrame()'s single nextPage() flushes everything.
-    // A smaller MAX_DISPLAY_BUFFER_SIZE would silently render only the top
-    // slice and this would need to become a real paged loop again.
-    static void beginFrame(bool partial = false);
-    static void endFrame();
-    static bool frameOpen();
+void drawFullWindow(std::function<void(Adafruit_GFX&)> drawFunction);
+void drawPartialWindow(int16_t x, int16_t y, int16_t w, int16_t h,
+                       std::function<void(Adafruit_GFX&)> drawFunction);
 
-    static Adafruit_GFX& canvas();
+// Immediate-mode frame, for callers that cannot draw from inside a callback --
+// notably the Lua bindings, where invoking a script from within the paged loop
+// could longjmp straight through it on error.
+//
+// Safe here only because the panel fits one page: MAX_HEIGHT resolves to the
+// full 300 rows, so endFrame()'s single nextPage() flushes everything. A
+// smaller MAX_DISPLAY_BUFFER_SIZE would silently render only the top slice and
+// this would need to become a real paged loop again.
+void beginFrame(bool partial = false);
+void endFrame();
+bool frameOpen();
 
-    static int16_t width();
-    static int16_t height();
+Adafruit_GFX& canvas();
 
-    static constexpr uint16_t kBlack = 0x0000;
-    static constexpr uint16_t kWhite = 0xFFFF;
+int16_t width();
+int16_t height();
 
-private:
-    static bool _frameOpen;
-};
+}  // namespace Display

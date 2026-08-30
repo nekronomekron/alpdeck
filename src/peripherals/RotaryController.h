@@ -15,7 +15,7 @@ public:
     // product; the rest of the system carries on without it.
     bool begin();
 
-    bool available() const { return _available; }
+    bool available() const { return available_; }
 
     // Level-triggered view of the controller, for apps that need to know what
     // is held right now rather than what changed. Filled by poll(), so reading
@@ -34,8 +34,8 @@ public:
     void poll(uint32_t nowMs, SeesawButtons::PublishFn publish);
 
 private:
-    int32_t _encoder = 0;
-    Adafruit_seesaw _device{&Wire};
-    SeesawButtons _buttons;
-    bool _available = false;
+    int32_t encoder_ = 0;
+    Adafruit_seesaw device_{&Wire};
+    SeesawButtons buttons_;
+    bool available_ = false;
 };
