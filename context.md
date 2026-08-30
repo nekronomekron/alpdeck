@@ -240,6 +240,7 @@ There is no CI. The gate is: both environments build, `pio check` is clean over
   end-to-end.
 - **Both controllers are detected** (rotary at 0x49, gamepad at 0x50), as of
   2026-08-30.
+- **The refactored firmware runs on hardware, and the fatal halt works.**
 
 **Built and verified off-device only:**
 
@@ -252,23 +253,19 @@ There is no CI. The gate is: both environments build, `pio check` is clean over
 
 ## Open points
 
-1. **Nothing from the 2026-08-30 refactor has run on hardware.** It builds
-   green in both environments and passes the harness, but the harness cannot
-   see the C side of a binding. Worth checking first, in order: the bootscreen
-   and the new logo, the launcher's fonts and layout, `display.begin` with a
-   region (and what `display.timing()` actually reports for a small region
-   versus the whole panel), and `display.bitmap` in the hello app.
-2. **The no-controller fatal halt is live again.** Boot with neither controller
-   attached to confirm the error screen renders and the device stops there.
-3. **Region refresh timing is a guess.** The ~400 ms figure in the docs is for
+1. **Not everything from the refactor has been exercised on hardware.** The
+   firmware runs and the fatal halt works. Still unconfirmed on the device:
+   `display.begin` with a region, `display.bitmap` in the hello app, and the
+   redrawn logo with its hidden-line removal and filled snow caps.
+2. **Region refresh timing is a guess.** The ~400 ms figure in the docs is for
    a whole-panel partial refresh. Measure a small region on the device before
    quoting a number to app authors.
-4. **32-bit integers and floats in Lua** (from `LUA_32BITS`) — sufficient for
+3. **32-bit integers and floats in Lua** (from `LUA_32BITS`) — sufficient for
    the launcher and apps, but a deliberate trade against 64-bit and double.
-5. **Old committed WiFi credentials** (`IoT`/`05021904`) are still in the git
+4. **Old committed WiFi credentials** (`IoT`/`05021904`) are still in the git
    history (commit fc1434d). Rotate them if the repository is ever public.
-6. **No `require`,** so an app is one file. Relevant once apps get large; the
+5. **No `require`,** so an app is one file. Relevant once apps get large; the
    embedded-Lua-prelude idea was considered and set aside.
-7. **No native toolchain,** so `test/native/` sits unrun and the C++-drawn
+6. **No native toolchain,** so `test/native/` sits unrun and the C++-drawn
    screens can only be previewed through a ported renderer rather than the real
    code.

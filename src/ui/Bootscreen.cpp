@@ -1,6 +1,5 @@
 #include "ui/Bootscreen.h"
 
-#include <Fonts/FreeSansBold9pt7b.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -19,7 +18,7 @@ constexpr uint16_t kWhite = 0xFFFF;
 constexpr int16_t kLogoTop = 22;
 constexpr int16_t kLogoWidth = 200;
 constexpr int16_t kTitleGap = 12;   // logo bottom to title top
-constexpr int16_t kTitleSize = 3;
+constexpr int16_t kTitleSize = 4;
 constexpr int16_t kSubtitleGap = 10;
 constexpr int16_t kVersionBottomInset = 12;
 
@@ -35,7 +34,7 @@ int16_t logoBottom() { return kLogoTop + Logo::height(kLogoWidth); }
 
 int16_t titleTop() { return logoBottom() + kTitleGap; }
 
-// The built-in font's cell is 8px tall; a GFXfont's box has to be measured.
+// Measured rather than assumed, so the layout survives a font change.
 void textSize(Adafruit_GFX& gfx, const char* text, uint8_t size,
               int16_t& width, int16_t& height, int16_t& topOffset) {
     gfx.setTextSize(size);
@@ -87,11 +86,13 @@ void draw(Adafruit_GFX& gfx) {
     Logo::draw(gfx, gfx.width() / 2 - kLogoWidth / 2, kLogoTop, kLogoWidth,
                kBlack);
 
-    gfx.setFont(&FreeSansBold9pt7b);
+    // The built-in 6x8 face, deliberately: its blocky character cells suit the
+    // mark better than a proportional one. The other faces stay available to
+    // apps through display.font().
+    gfx.setFont(nullptr);
     const int16_t titleHeight =
         drawCentered(gfx, Config::APP_NAME, titleTop(), kTitleSize);
 
-    gfx.setFont(nullptr);
     drawCentered(gfx, Config::APP_SUBTITLE,
                  titleTop() + titleHeight + kSubtitleGap, 1);
 

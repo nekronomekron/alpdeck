@@ -90,6 +90,13 @@ display.font("default")            -- 6x8 built-in, exact character cells
 display.font("sans")               -- FreeSans 9pt, proportional
 display.font("bold")               -- FreeSans Bold 9pt
 display.font("pixel")              -- Org_01, blocky, good for games
+```
+
+The launcher and the bootscreen deliberately stay on `"default"`: its blocky
+cells are the alpdeck look and they land exactly on the pixel grid. The other
+faces are there for apps.
+
+```lua
 
 display.text(x, y, s [, size])     -- size 1..8, default 1
 display.measure(s [, size])        --> width, height

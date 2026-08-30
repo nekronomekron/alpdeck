@@ -23,7 +23,7 @@ local MANIFEST = "app.lua"
 
 local MARGIN = 12
 local NAV_HEIGHT = 40        -- navbar, closed by a full-width 2px rule
-local ROW_HEIGHT = 24
+local ROW_HEIGHT = 22
 local LIST_TOP = NAV_HEIGHT + 14
 local VISIBLE = math.floor((H - LIST_TOP - 6) / ROW_HEIGHT)
 
@@ -167,13 +167,14 @@ local function drawMenuIcon(x, y)
     end
 end
 
+-- The whole launcher uses the built-in 6x8 face: its blocky cells are the
+-- alpdeck look, and they line up exactly with the pixel grid. The other faces
+-- stay available to apps through display.font().
 local function drawNavbar()
-    display.font("bold")
-    local titleW = display.measure("alpdeck", 2)
-    display.text(MARGIN, 6, "alpdeck", 2)
+    local titleW = display.measure("alpdeck", 3)
+    display.text(MARGIN, 8, "alpdeck", 3)
 
-    display.font("default")
-    display.text(MARGIN + titleW + 8, 22, VERSION, 1)
+    display.text(MARGIN + titleW + 6, 24, VERSION, 1)
 
     local menuX = W - MARGIN - 16
     drawMenuIcon(menuX, 14)
@@ -183,13 +184,10 @@ local function drawNavbar()
 end
 
 local function drawEmpty()
-    display.font("bold")
-    display.text(MARGIN, LIST_TOP + 8, "no apps found", 2)
-
-    display.font("default")
-    display.text(MARGIN, LIST_TOP + 48, APPS_DIR .. "/<name>/" .. ENTRY, 1)
-    display.text(MARGIN, LIST_TOP + 64, "add apps to the sd card, then press", 1)
-    display.text(MARGIN, LIST_TOP + 76, "select to rescan.", 1)
+    display.text(MARGIN, LIST_TOP + 10, "no apps found", 2)
+    display.text(MARGIN, LIST_TOP + 40, APPS_DIR .. "/<name>/" .. ENTRY, 1)
+    display.text(MARGIN, LIST_TOP + 54, "add apps to the sd card, then press", 1)
+    display.text(MARGIN, LIST_TOP + 66, "select to rescan.", 1)
 end
 
 -- The selected row is a filled black bar, so everything on it switches to
@@ -201,21 +199,18 @@ local function drawRow(app, index, y)
     if active then
         display.rect(MARGIN, y - 4, W - 2 * MARGIN, ROW_HEIGHT, true)
         display.color("white")
-        display.font("default")
-        display.text(MARGIN + 6, y + 4, ">", 1)
+        display.text(MARGIN + 6, y, ">", 2)
     end
 
-    display.font("sans")
-    display.text(MARGIN + 24, y, app.name, 1)
+    display.text(MARGIN + 24, y, app.name, 2)
 
-    display.font("default")
     local label = app.version or ""
     if app.stale then
         label = (label ~= "" and label .. "  " or "") .. "api!"
     end
     if label ~= "" then
         local labelW = display.measure(label, 1)
-        display.text(W - MARGIN - 10 - labelW, y + 6, label, 1)
+        display.text(W - MARGIN - 10 - labelW, y + 4, label, 1)
     end
 
     display.color("black")

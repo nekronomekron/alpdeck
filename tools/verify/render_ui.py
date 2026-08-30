@@ -3,27 +3,18 @@
     python tools/verify/render_ui.py [out_dir]
 
 These are PREVIEWS, not goldens. run.py does not compare them and they are not
-committed. Layout constants are parsed out of the C++, so a layout change does
-show up here -- but the drawing procedure is a port, and a change to HOW
-Logo.cpp or Bootscreen.cpp draws will not appear until this file is updated
-too. Treat a preview as "roughly what the panel will show"; the device is the
-authority.
-
-The geometry is not copied: it is parsed out of the LOGO_GEOMETRY block in
-src/ui/Logo.cpp, so the preview cannot drift from what the firmware draws.
-
-What IS duplicated is the drawing procedure -- the stroke weight rule, the
-flank interpolation, the cap polyline. That is about forty lines, and it is
-duplicated because there is no host compiler on this machine to build the real
-Logo.cpp against. If a native toolchain ever appears, delete this and render
-from the firmware itself.
+committed. Layout constants and the logo geometry are parsed straight out of
+Logo.cpp, Bootscreen.cpp and AppConfig.h, so changing a number shows up here --
+but the drawing procedure is a port, and changing HOW those files draw will not
+appear until this file is updated to match. The device is the authority for
+anything drawn in C++.
 """
 
 import os
 import re
 import sys
 
-from gfx import BLACK, WHITE, Canvas
+from gfx import BLACK, WHITE, Canvas, load_gfx_font
 from png import write_gray_png
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -35,8 +26,10 @@ CONFIG_SOURCE = os.path.join(PROJECT_ROOT, "src", "config", "AppConfig.h")
 SIMPLIFY_BELOW_WIDTH = 90
 
 
+# ------------------------------------------------------------------ parsing
+
 def geometry():
-    """Parse the constants between the LOGO_GEOMETRY markers."""
+    """The constants between the LOGO_GEOMETRY markers in Logo.cpp."""
     with open(LOGO_SOURCE, "r", encoding="utf-8") as handle:
         source = handle.read()
 
@@ -48,79 +41,7 @@ def geometry():
     return {name: float(value) for name, value in values.items()}
 
 
-class Peak:
-    def __init__(self, apex_x, apex_y, left_foot_x, right_foot_x, foot_y):
-        self.apex_x = apex_x
-        self.apex_y = apex_y
-        self.left_foot_x = left_foot_x
-        self.right_foot_x = right_foot_x
-        self.foot_y = foot_y
-
-    def flank_x(self, foot_x, depth):
-        return self.apex_x + (foot_x - self.apex_x) * depth
-
-    def depth_y(self, depth):
-        return self.apex_y + (self.foot_y - self.apex_y) * depth
-
-
-def _stroke(canvas, x0, y0, x1, y1, color, weight):
-    mostly_horizontal = abs(x1 - x0) >= abs(y1 - y0)
-    for step in range(weight):
-        dx = 0 if mostly_horizontal else step
-        dy = step if mostly_horizontal else 0
-        canvas.draw_line(x0 + dx, y0 + dy, x1 + dx, y1 + dy, color)
-
-
-def draw_logo(canvas, x, y, width, geo, color=BLACK):
-    height = int(width * geo["kAspect"] + 0.5)
-    simplified = width < SIMPLIFY_BELOW_WIDTH
-    weight = 2 if width >= 150 else 1
-
-    def px(value):
-        return x + int(value * width + 0.5)
-
-    def py(value):
-        return y + int(value * height + 0.5)
-
-    peaks = (
-        Peak(geo["kRightApexX"], geo["kRightApexY"], geo["kRightLeftFootX"],
-             geo["kRightRightFootX"], geo["kRightFootY"]),
-        Peak(geo["kLeftApexX"], geo["kLeftApexY"], geo["kLeftLeftFootX"],
-             geo["kLeftRightFootX"], geo["kLeftFootY"]),
-    )
-
-    for peak in peaks:
-        _stroke(canvas, px(peak.left_foot_x), py(peak.foot_y),
-                px(peak.apex_x), py(peak.apex_y), color, weight)
-        _stroke(canvas, px(peak.apex_x), py(peak.apex_y),
-                px(peak.right_foot_x), py(peak.foot_y), color, weight)
-        _stroke(canvas, px(peak.left_foot_x), py(peak.foot_y),
-                px(peak.right_foot_x), py(peak.foot_y), color, weight)
-
-        left_x = peak.flank_x(peak.left_foot_x, geo["kCapFlank"])
-        right_x = peak.flank_x(peak.right_foot_x, geo["kCapFlank"])
-        flank_y = peak.depth_y(geo["kCapFlank"])
-        notch_y = peak.depth_y(geo["kCapNotch"])
-        rise_y = peak.depth_y(geo["kCapRise"])
-        span = right_x - left_x
-
-        if simplified:
-            xs = (left_x, left_x + span * 0.5, right_x)
-            ys = (flank_y, notch_y, flank_y)
-        else:
-            xs = (left_x, left_x + span * 0.25, left_x + span * 0.5,
-                  left_x + span * 0.75, right_x)
-            ys = (flank_y, notch_y, rise_y, notch_y, flank_y)
-
-        for i in range(len(xs) - 1):
-            _stroke(canvas, px(xs[i]), py(ys[i]), px(xs[i + 1]), py(ys[i + 1]),
-                    color, weight)
-
-    return height
-
-
 def bootscreen_layout():
-    """Parse the layout constants out of Bootscreen.cpp."""
     with open(BOOTSCREEN_SOURCE, "r", encoding="utf-8") as handle:
         source = handle.read()
     values = dict(re.findall(r"constexpr \w+ (k[A-Za-z]+) = (-?\d+);", source))
@@ -137,19 +58,164 @@ def app_strings():
     return name, subtitle, "%s v%s.%s" % (name, major, minor)
 
 
+# -------------------------------------------------------------- rasteriser
+#
+# A port of the one in Logo.cpp. Adafruit_GFX cannot skip pixels, so the lines
+# and the cap fill are rasterised by hand where the occluder can be consulted.
+
+class Peak:
+    def __init__(self, apex_x, apex_y, left_foot_x, right_foot_x, foot_y):
+        self.apex_x = apex_x
+        self.apex_y = apex_y
+        self.left_foot_x = left_foot_x
+        self.right_foot_x = right_foot_x
+        self.foot_y = foot_y
+
+    def flank_x(self, foot_x, depth):
+        return self.apex_x + (foot_x - self.apex_x) * depth
+
+    def depth_y(self, depth):
+        return self.apex_y + (self.foot_y - self.apex_y) * depth
+
+
+def _cross(ax, ay, bx, by, x, y):
+    return (bx - ax) * (y - ay) - (by - ay) * (x - ax)
+
+
+def _hidden(occluder, x, y):
+    """Point in triangle, boundary included."""
+    if occluder is None:
+        return False
+    (ax, ay), (bx, by), (cx, cy) = occluder
+    d1 = _cross(ax, ay, bx, by, x, y)
+    d2 = _cross(bx, by, cx, cy, x, y)
+    d3 = _cross(cx, cy, ax, ay, x, y)
+    return not ((d1 < 0 or d2 < 0 or d3 < 0) and (d1 > 0 or d2 > 0 or d3 > 0))
+
+
+def _plot(canvas, x, y, color, occluder):
+    if not _hidden(occluder, x, y):
+        canvas.draw_pixel(x, y, color)
+
+
+def _line(canvas, x0, y0, x1, y1, color, weight, occluder):
+    mostly_horizontal = abs(x1 - x0) >= abs(y1 - y0)
+    steep = abs(y1 - y0) > abs(x1 - x0)
+    if steep:
+        x0, y0 = y0, x0
+        x1, y1 = y1, x1
+    if x0 > x1:
+        x0, x1 = x1, x0
+        y0, y1 = y1, y0
+
+    dx = x1 - x0
+    dy = abs(y1 - y0)
+    error = dx // 2
+    step = 1 if y0 < y1 else -1
+
+    y = y0
+    for x in range(x0, x1 + 1):
+        for offset in range(weight):
+            ox = 0 if mostly_horizontal else offset
+            oy = offset if mostly_horizontal else 0
+            if steep:
+                _plot(canvas, y + ox, x + oy, color, occluder)
+            else:
+                _plot(canvas, x + ox, y + oy, color, occluder)
+        error -= dy
+        if error < 0:
+            y += step
+            error += dx
+
+
+def _fill_polygon(canvas, points, color, occluder):
+    """Even-odd scanline fill: the cap's lower edge is a zigzag, so a scanline
+    can cross it more than twice."""
+    top = min(point[1] for point in points)
+    bottom = max(point[1] for point in points)
+
+    for y in range(top, bottom + 1):
+        crossings = []
+        for i in range(len(points)):
+            fx, fy = points[i]
+            tx, ty = points[(i + 1) % len(points)]
+            if fy == ty:
+                continue
+            if not (min(fy, ty) <= y < max(fy, ty)):
+                continue
+            crossings.append(fx + (tx - fx) * (y - fy) // (ty - fy))
+        crossings.sort()
+        for i in range(0, len(crossings) - 1, 2):
+            for x in range(crossings[i], crossings[i + 1] + 1):
+                _plot(canvas, x, y, color, occluder)
+
+
+def draw_logo(canvas, x, y, width, geo, color=BLACK):
+    height = int(width * geo["kAspect"] + 0.5)
+    simplified = width < SIMPLIFY_BELOW_WIDTH
+    weight = 2 if width >= 150 else 1
+
+    def px(value):
+        return x + int(value * width + 0.5)
+
+    def py(value):
+        return y + int(value * height + 0.5)
+
+    foot_y = geo["kFootY"]
+    back = Peak(geo["kRightApexX"], geo["kRightApexY"], geo["kRightLeftFootX"],
+                geo["kRightRightFootX"], foot_y)
+    front = Peak(geo["kLeftApexX"], geo["kLeftApexY"], geo["kLeftLeftFootX"],
+                 geo["kLeftRightFootX"], foot_y)
+
+    occluder = ((px(front.apex_x), py(front.apex_y)),
+                (px(front.left_foot_x), py(foot_y)),
+                (px(front.right_foot_x), py(foot_y)))
+
+    # Back peak first, with everything behind the front one omitted rather than
+    # overpainted, so the mark stays transparent.
+    for peak, clip in ((back, occluder), (front, None)):
+        apex = (px(peak.apex_x), py(peak.apex_y))
+        left = (px(peak.left_foot_x), py(foot_y))
+        right = (px(peak.right_foot_x), py(foot_y))
+
+        _line(canvas, left[0], left[1], apex[0], apex[1], color, weight, clip)
+        _line(canvas, apex[0], apex[1], right[0], right[1], color, weight, clip)
+        _line(canvas, left[0], left[1], right[0], right[1], color, weight, clip)
+
+        cap_left = peak.flank_x(peak.left_foot_x, geo["kCapFlank"])
+        cap_right = peak.flank_x(peak.right_foot_x, geo["kCapFlank"])
+        flank_y = peak.depth_y(geo["kCapFlank"])
+        notch_y = peak.depth_y(geo["kCapNotch"])
+        rise_y = peak.depth_y(geo["kCapRise"])
+        span = cap_right - cap_left
+
+        cap = [apex, (px(cap_left), py(flank_y))]
+        if simplified:
+            cap.append((px(cap_left + span * 0.5), py(notch_y)))
+        else:
+            cap.append((px(cap_left + span * 0.25), py(notch_y)))
+            cap.append((px(cap_left + span * 0.5), py(rise_y)))
+            cap.append((px(cap_left + span * 0.75), py(notch_y)))
+        cap.append((px(cap_right), py(flank_y)))
+
+        _fill_polygon(canvas, cap, color, clip)
+
+    return height
+
+
+# ------------------------------------------------------------- bootscreen
+
 def _centered(canvas, text, y, size, font):
     canvas.set_font(font)
     canvas.set_text_size(size)
-    _x1, y1, width, _height = canvas.get_text_bounds(text, 0, 0)
+    _x1, y1, width, height = canvas.get_text_bounds(text, 0, 0)
     canvas.set_text_color(BLACK)
     canvas.set_cursor(canvas.width // 2 - width // 2, y - y1)
     canvas.print(text)
-    return _height
+    return height
 
 
 def draw_bootscreen(canvas, geo, layout, error=None):
-    from gfx import load_gfx_font
-
     canvas.fill_screen(WHITE)
     name, subtitle, version = app_strings()
 
@@ -159,8 +225,7 @@ def draw_bootscreen(canvas, geo, layout, error=None):
                             logo_top, logo_width, geo)
 
     title_top = logo_top + logo_height + layout["kTitleGap"]
-    title_height = _centered(canvas, name, title_top, layout["kTitleSize"],
-                             load_gfx_font("FreeSansBold9pt7b"))
+    title_height = _centered(canvas, name, title_top, layout["kTitleSize"], None)
     _centered(canvas, subtitle,
               title_top + title_height + layout["kSubtitleGap"], 1, None)
 
@@ -218,21 +283,21 @@ def main(argv):
     # One sheet, every size that matters: bootscreen, half, and the navbar icon
     # the launcher may want back.
     widths = (200, 120, 90, 64, 32, 16)
-    canvas = Canvas(400, 300)
-    canvas.fill_screen(WHITE)
+    sheet = Canvas(400, 300)
+    sheet.fill_screen(WHITE)
 
     cursor_y = 12
     for width in widths:
-        height = draw_logo(canvas, 12, cursor_y, width, geo)
-        canvas.set_font(None)
-        canvas.set_text_size(1)
-        canvas.set_text_color(BLACK)
-        canvas.set_cursor(240, cursor_y + max(0, height // 2 - 4))
-        canvas.print("%d x %d px" % (width, height))
+        height = draw_logo(sheet, 12, cursor_y, width, geo)
+        sheet.set_font(None)
+        sheet.set_text_size(1)
+        sheet.set_text_color(BLACK)
+        sheet.set_cursor(240, cursor_y + max(0, height // 2 - 4))
+        sheet.print("%d x %d px" % (width, height))
         cursor_y += height + 10
 
     path = os.path.join(out_dir, "logo-sizes.png")
-    write_gray_png(path, canvas.width, canvas.height, canvas.to_gray())
+    write_gray_png(path, sheet.width, sheet.height, sheet.to_gray())
     print("wrote", path)
 
     for filename, error in (("bootscreen.png", None),
