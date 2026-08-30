@@ -18,7 +18,6 @@
 namespace BootSequence {
 namespace {
 
-Bootscreen bootscreen;
 bool sdMounted = false;
 
 // How long to wait for a serial monitor to attach before giving up on it.
@@ -31,8 +30,8 @@ constexpr uint32_t kSerialAttachTimeoutMs = 1000;
     LOGE(kLogTag, "Fatal: %s", message);
 
     Display::drawFullWindow([&](Adafruit_GFX& gfx) {
-        bootscreen.init(gfx);
-        bootscreen.drawError(gfx, message);
+        Bootscreen::draw(gfx);
+        Bootscreen::drawError(gfx, message);
     });
 
     while (true) {
@@ -155,7 +154,7 @@ void run() {
     PowerButton::begin();
 
     Display::init();
-    Display::drawFullWindow([&](Adafruit_GFX& gfx) { bootscreen.init(gfx); });
+    Display::drawFullWindow(Bootscreen::draw);
 
     // Only now is there a panel worth blanking on the way down.
     PowerButton::onBeforeSleep(Display::shutdown);

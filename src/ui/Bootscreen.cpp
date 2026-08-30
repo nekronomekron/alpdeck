@@ -1,150 +1,176 @@
 #include "ui/Bootscreen.h"
 
+#include <Fonts/FreeSansBold9pt7b.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "config/AppConfig.h"
+#include "ui/Logo.h"
 
-Bootscreen::Bootscreen(int16_t w, int16_t h, uint16_t black, uint16_t white)
-    : width_(w), height_(h), black_(black), white_(white) {}
+namespace Bootscreen {
+namespace {
 
-void Bootscreen::init(Adafruit_GFX& gfx) {
-    gfx.fillRect(0, 0, width_, height_, white_);
-    drawLogo(gfx);
+constexpr uint16_t kBlack = 0x0000;
+constexpr uint16_t kWhite = 0xFFFF;
 
-    textCentered(gfx, Config::APP_NAME, cx(), base() + 22, 4);
-    textCentered(gfx, Config::APP_SUBTITLE, cx(), base() + 62, 1);
+// Layout, top to bottom. Every offset below the logo is derived from its
+// height rather than from a magic number, so resizing the mark moves the text
+// with it instead of overlapping it.
+constexpr int16_t kLogoTop = 22;
+constexpr int16_t kLogoWidth = 200;
+constexpr int16_t kTitleGap = 12;   // logo bottom to title top
+constexpr int16_t kTitleSize = 3;
+constexpr int16_t kSubtitleGap = 10;
+constexpr int16_t kVersionBottomInset = 12;
 
-    gfx.setTextSize(1);
-    gfx.setTextColor(black_);
-    gfx.setCursor(6, height_ - 12);
+// Error block.
+constexpr int16_t kSignWidth = 30;
+constexpr int16_t kSignHeight = 26;
+constexpr int16_t kSignTextGap = 12;
+constexpr int16_t kFramePadX = 10;
+constexpr int16_t kFramePadY = 8;
+constexpr size_t kMessageLimit = 96;
 
-    char buffer[50];
-    snprintf(buffer, sizeof(buffer), "%s v%d.%d", Config::APP_NAME,
-             Config::APP_VERSION_MAJOR, Config::APP_VERSION_MINOR);
+int16_t logoBottom() { return kLogoTop + Logo::height(kLogoWidth); }
 
-    gfx.print(buffer);
+int16_t titleTop() { return logoBottom() + kTitleGap; }
+
+// The built-in font's cell is 8px tall; a GFXfont's box has to be measured.
+void textSize(Adafruit_GFX& gfx, const char* text, uint8_t size,
+              int16_t& width, int16_t& height, int16_t& topOffset) {
+    gfx.setTextSize(size);
+
+    int16_t boundsX = 0;
+    int16_t boundsY = 0;
+    uint16_t boundsW = 0;
+    uint16_t boundsH = 0;
+    gfx.getTextBounds(text, 0, 0, &boundsX, &boundsY, &boundsW, &boundsH);
+
+    width = static_cast<int16_t>(boundsW);
+    height = static_cast<int16_t>(boundsH);
+    topOffset = boundsY;
 }
 
-void Bootscreen::drawError(Adafruit_GFX& gfx, const char* message) {
+// Draws text centred horizontally, with y as its TOP edge whichever font is
+// active. Returns the height, so the caller can stack the next line.
+int16_t drawCentered(Adafruit_GFX& gfx, const char* text, int16_t y,
+                     uint8_t size) {
+    int16_t width = 0;
+    int16_t height = 0;
+    int16_t topOffset = 0;
+    textSize(gfx, text, size, width, height, topOffset);
+
+    gfx.setTextColor(kBlack);
+    gfx.setCursor(gfx.width() / 2 - width / 2, y - topOffset);
+    gfx.print(text);
+    return height;
+}
+
+void drawWarningSign(Adafruit_GFX& gfx, int16_t x, int16_t y) {
+    gfx.fillTriangle(x + kSignWidth / 2, y, x, y + kSignHeight - 1,
+                     x + kSignWidth - 1, y + kSignHeight - 1, kBlack);
+
+    // The '!' ink is a narrow centred column, so it stays inside the triangle
+    // even near the apex. White on the filled sign.
+    gfx.setFont(nullptr);
+    gfx.setTextSize(2);
+    gfx.setTextColor(kWhite);
+    gfx.setCursor(x + kSignWidth / 2 - 5, y + 9);
+    gfx.print('!');
+}
+
+}  // namespace
+
+void draw(Adafruit_GFX& gfx) {
+    gfx.fillScreen(kWhite);
+
+    Logo::draw(gfx, gfx.width() / 2 - kLogoWidth / 2, kLogoTop, kLogoWidth,
+               kBlack);
+
+    gfx.setFont(&FreeSansBold9pt7b);
+    const int16_t titleHeight =
+        drawCentered(gfx, Config::APP_NAME, titleTop(), kTitleSize);
+
+    gfx.setFont(nullptr);
+    drawCentered(gfx, Config::APP_SUBTITLE,
+                 titleTop() + titleHeight + kSubtitleGap, 1);
+
+    char version[48];
+    snprintf(version, sizeof(version), "%s v%d.%d", Config::APP_NAME,
+             Config::APP_VERSION_MAJOR, Config::APP_VERSION_MINOR);
+
+    gfx.setTextSize(1);
+    gfx.setTextColor(kBlack);
+    gfx.setCursor(6, gfx.height() - kVersionBottomInset);
+    gfx.print(version);
+}
+
+void drawError(Adafruit_GFX& gfx, const char* message) {
     if (message == nullptr || message[0] == '\0') {
         return;
     }
 
-    // Split on at most one '\n' into two lines.
-    char buffer[96];
+    // Copy so the split can be done in place. Too long is marked, not dropped:
+    // a truncated fatal message that looks complete is worse than an obvious
+    // one, because it sends you looking for the wrong fault.
+    char buffer[kMessageLimit];
+    const bool truncated = strlen(message) >= sizeof(buffer);
     strncpy(buffer, message, sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
-
-    char* line1 = buffer;
-    char* line2 = strchr(buffer, '\n');
-    if (line2 != nullptr) {
-        *line2 = '\0';
-        line2++;
+    if (truncated && sizeof(buffer) > 4) {
+        strcpy(buffer + sizeof(buffer) - 4, "...");
     }
 
-    constexpr int16_t kSignW = 30;
-    constexpr int16_t kSignH = 26;
-    constexpr int16_t kGap = 12;
-    constexpr int16_t kPadX = 10;  // border padding around sign + text
-    constexpr int16_t kPadY = 8;
-
-    // Centre sign + text as one block in the area the logo leaves free.
-    size_t longest = strlen(line1);
-    if (line2 != nullptr && strlen(line2) > longest) {
-        longest = strlen(line2);
-    }
-    const int16_t textW = (int16_t)(6 * longest);
-    const int16_t blockW = kSignW + kGap + textW;
-    const int16_t blockH = kSignH + 2 * kPadY;
-
-    int16_t left = cx() - blockW / 2;
-    if (left < kPadX + 2) {
-        left = kPadX + 2;
+    char* firstLine = buffer;
+    char* secondLine = strchr(buffer, '\n');
+    if (secondLine != nullptr) {
+        *secondLine = '\0';
+        secondLine++;
     }
 
-    // Centre the block vertically in the free band between the subtitle
-    // (base()+62, size-1 text, ~8px tall) and the version line at height_-12.
-    const int16_t bandTop = base() + 70;
-    const int16_t bandBottom = height_ - 12;
-    const int16_t borderTop = bandTop + (bandBottom - bandTop - blockH) / 2;
-    const int16_t top = borderTop + kPadY;
-
-    gfx.drawRect(left - kPadX, borderTop, blockW + 2 * kPadX, blockH, black_);
-
-    drawWarningSign(gfx, left, top);
-
+    gfx.setFont(nullptr);
     gfx.setTextSize(1);
-    gfx.setTextColor(black_);
-    const int16_t textX = left + kSignW + kGap;
-    if (line2 != nullptr) {
-        gfx.setCursor(textX, top + 4);
-        gfx.print(line1);
-        gfx.setCursor(textX, top + 16);
-        gfx.print(line2);
+
+    // Centre the sign and the text as one block in the band the layout leaves
+    // free: below the subtitle, above the version line.
+    size_t longest = strlen(firstLine);
+    if (secondLine != nullptr && strlen(secondLine) > longest) {
+        longest = strlen(secondLine);
+    }
+    const int16_t textWidth = static_cast<int16_t>(6 * longest);
+    const int16_t blockWidth = kSignWidth + kSignTextGap + textWidth;
+    const int16_t blockHeight = kSignHeight + 2 * kFramePadY;
+
+    int16_t left = gfx.width() / 2 - blockWidth / 2;
+    if (left < kFramePadX + 2) {
+        left = kFramePadX + 2;
+    }
+
+    // The band: everything between the subtitle's baseline and the version.
+    const int16_t bandTop = titleTop() + 8 * kTitleSize + kSubtitleGap + 24;
+    const int16_t bandBottom = gfx.height() - kVersionBottomInset - 6;
+    const int16_t frameTop =
+        bandTop + (bandBottom - bandTop - blockHeight) / 2;
+    const int16_t contentTop = frameTop + kFramePadY;
+
+    gfx.drawRect(left - kFramePadX, frameTop, blockWidth + 2 * kFramePadX,
+                 blockHeight, kBlack);
+
+    drawWarningSign(gfx, left, contentTop);
+
+    gfx.setFont(nullptr);
+    gfx.setTextSize(1);
+    gfx.setTextColor(kBlack);
+    const int16_t textX = left + kSignWidth + kSignTextGap;
+    if (secondLine != nullptr) {
+        gfx.setCursor(textX, contentTop + 4);
+        gfx.print(firstLine);
+        gfx.setCursor(textX, contentTop + 16);
+        gfx.print(secondLine);
     } else {
-        gfx.setCursor(textX, top + 10);  // vertically centred on the sign
-        gfx.print(line1);
+        gfx.setCursor(textX, contentTop + 10);  // centred on the sign
+        gfx.print(firstLine);
     }
 }
 
-void Bootscreen::drawWarningSign(Adafruit_GFX& gfx, int16_t x, int16_t y) {
-    constexpr int16_t kW = 30;
-    constexpr int16_t kH = 26;
-    gfx.fillTriangle(x + kW / 2, y, x, y + kH - 1, x + kW - 1, y + kH - 1,
-                     black_);
-
-    // The '!' ink is a narrow centred column, so it stays inside the triangle
-    // even near the apex. White on the filled sign.
-    gfx.setTextSize(2);
-    gfx.setTextColor(white_);
-    gfx.setCursor(x + kW / 2 - 5, y + 9);
-    gfx.print('!');
-}
-
-void Bootscreen::drawLogo(Adafruit_GFX& gfx) {
-    const int16_t b = base();
-
-    // Right peak: two straight flanks.
-    const int16_t bxc = cx() + 70, bh = 82, bapex = b - bh;
-    gfx.drawLine(bxc - bh, b, bxc, bapex, black_);
-    gfx.drawLine(bxc, bapex, bxc + bh, b, black_);
-
-    const int16_t y0 = bapex + 27;
-    zigzag(gfx, bxc, y0);
-
-    // Left peak: filled triangle with carved-out snow line.
-    const int16_t fx = cx() - 62, fh = 74, a = b - fh;
-    for (int16_t t = 0; t <= fh; t++) {
-        gfx.drawFastHLine(fx - t, a + t, 2 * t + 1, black_);
-    }
-
-    for (int16_t t = 3; t < 17; t++) {
-        gfx.drawFastHLine(fx - t + 3, a + t, 2 * t - 5, white_);
-    }
-    for (int16_t t = 17; t < 25; t++) {
-        const int16_t wz = 49 - 2 * t;
-        gfx.drawFastHLine(fx + t - 32, a + t, wz, white_);
-        gfx.drawFastHLine(fx + t - 16, a + t, wz, white_);
-    }
-
-    gfx.fillRect(cx() - 142, b, 296, 2, black_);
-}
-
-void Bootscreen::textCentered(Adafruit_GFX& gfx, const char* s, int16_t xc,
-                              int16_t y, uint8_t size) {
-    // 6px advance per glyph in the GFX built-in font.
-    const int16_t tw = 6 * (int16_t)strlen(s) * size;
-    gfx.setTextSize(size);
-    gfx.setTextColor(black_);
-    gfx.setCursor(xc - tw / 2, y);
-    gfx.print(s);
-}
-
-void Bootscreen::zigzag(Adafruit_GFX& gfx, int16_t xc, int16_t y0) {
-    const int16_t px[7] = {-27, -18, -9, 0, 9, 18, 27};
-    const int16_t py[7] = {0, 9, 0, 9, 0, 9, 0};
-    for (int i = 0; i < 6; i++) {
-        gfx.drawLine(xc + px[i], y0 + py[i], xc + px[i + 1], y0 + py[i + 1],
-                     black_);
-    }
-}
+}  // namespace Bootscreen

@@ -22,6 +22,21 @@ Pillow is missing somewhere.
 `golden/` is committed and is the reference. `out/` is this run's output and is
 git-ignored — diff the two by eye when a check fails.
 
+There is a second script for the screens the firmware draws in C++ rather than
+through Lua:
+
+```bash
+~/.platformio/penv/Scripts/python.exe tools/verify/render_ui.py
+```
+
+It writes the mark at six widths, the bootscreen and the error screen into
+`out/`. Those are **previews, not goldens**: `run.py` does not compare them.
+Layout constants and the logo geometry are parsed straight out of `Logo.cpp`,
+`Bootscreen.cpp` and `AppConfig.h`, so changing a number shows up immediately —
+but the drawing procedure is a port, and changing *how* those files draw will
+not appear until `render_ui.py` is updated to match. The device is the
+authority for anything drawn in C++.
+
 ## Why this exists
 
 The two worst bugs this project has had were invisible to the compiler and to a
