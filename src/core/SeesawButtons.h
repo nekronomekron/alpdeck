@@ -29,6 +29,13 @@ public:
     // main loop with millis().
     void poll(uint32_t nowMs, PublishFn publish);
 
+    // Debounced level of one button, by its index in the table handed to
+    // begin(). Returns what the last poll() left behind and touches no I2C, so
+    // it is safe to read from a task that does not own the bus.
+    bool pressed(size_t index) const {
+        return index < _count && _states[index].pressed;
+    }
+
 private:
     static constexpr size_t kMaxButtons = 8;
 

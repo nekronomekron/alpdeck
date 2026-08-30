@@ -4,6 +4,17 @@
 #include "core/Logger.h"
 
 namespace {
+// Index into kButtons below. state() reads the button bank by position, so the
+// two must stay in step.
+enum ButtonIndex : size_t {
+    kSelect = 0,
+    kB,
+    kY,
+    kA,
+    kX,
+    kStart,
+};
+
 // All buttons fire on press; the gamepad has no long-press mapping.
 const SeesawButtons::Button kButtons[] = {
     {Config::GAMEPAD_PIN_SELECT, Input::Event::GamepadSelect,
@@ -35,9 +46,11 @@ bool GamepadController::begin() {
     _buttons.begin(_device, kButtons, sizeof(kButtons) / sizeof(kButtons[0]));
 
     _axisX = {Config::GAMEPAD_PIN_STICK_X, Config::GAMEPAD_STICK_INVERT_X,
-              Input::Event::GamepadLeft, Input::Event::GamepadRight, 0};
+              Input::Event::GamepadLeft, Input::Event::GamepadRight, 0,
+              Config::GAMEPAD_STICK_CENTER, 0};
     _axisY = {Config::GAMEPAD_PIN_STICK_Y, Config::GAMEPAD_STICK_INVERT_Y,
-              Input::Event::GamepadUp, Input::Event::GamepadDown, 0};
+              Input::Event::GamepadUp, Input::Event::GamepadDown, 0,
+              Config::GAMEPAD_STICK_CENTER, 0};
 
     _available = true;
     LOGI(kLogTag, "Ready at 0x%02X (product %u)", Config::GAMEPAD_I2C_ADDRESS,
@@ -45,12 +58,37 @@ bool GamepadController::begin() {
     return true;
 }
 
+GamepadController::State GamepadController::state() const {
+    State state;
+    if (!_available) {
+        return state;  // absent controller reads as "nothing held"
+    }
+
+    state.select = _buttons.pressed(kSelect);
+    state.b = _buttons.pressed(kB);
+    state.y = _buttons.pressed(kY);
+    state.a = _buttons.pressed(kA);
+    state.x = _buttons.pressed(kX);
+    state.start = _buttons.pressed(kStart);
+
+    state.axisX = _axisX.engaged;
+    state.axisY = _axisY.engaged;
+    state.deflectionX = _axisX.deflection;
+    state.deflectionY = _axisY.deflection;
+    state.stickX = _axisX.raw;
+    state.stickY = _axisY.raw;
+    return state;
+}
+
 void GamepadController::pollAxis(Axis& axis, SeesawButtons::PublishFn publish) {
-    int16_t deflection = static_cast<int16_t>(_device.analogRead(axis.pin)) -
-                         Config::GAMEPAD_STICK_CENTER;
+    axis.raw = _device.analogRead(axis.pin);
+
+    int16_t deflection =
+        static_cast<int16_t>(axis.raw) - Config::GAMEPAD_STICK_CENTER;
     if (axis.invert) {
         deflection = -deflection;
     }
+    axis.deflection = deflection;
 
     // Hysteresis: engage beyond STICK_PRESS, release below STICK_RELEASE. In
     // between, the previous direction holds, so a stick held near the

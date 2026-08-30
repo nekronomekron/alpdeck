@@ -38,6 +38,38 @@ public:
         GamepadSelect,
     };
 
+    // Level-triggered mirror of both controllers, refreshed by every poll().
+    // The event queue reports edges only -- it can say a button was pressed,
+    // never that it is still held, and it says nothing at all about a release.
+    // A test or a game that needs "what is held right now" reads this instead.
+    //
+    // Gamepad fields are in the BOARD's frame, like the gamepad_* events: a
+    // rotated mounting is the app's business, not the driver's.
+    struct Snapshot {
+        bool hasRotary = false;
+        bool hasGamepad = false;
+
+        bool rotarySelect = false;
+        bool rotaryUp = false;
+        bool rotaryLeft = false;
+        bool rotaryDown = false;
+        bool rotaryRight = false;
+        int32_t rotaryEncoder = 0;  // detents since boot, cw positive
+
+        bool gamepadA = false;
+        bool gamepadB = false;
+        bool gamepadX = false;
+        bool gamepadY = false;
+        bool gamepadStart = false;
+        bool gamepadSelect = false;
+        int8_t gamepadAxisX = 0;  // -1 left, +1 right
+        int8_t gamepadAxisY = 0;  // -1 up, +1 down
+        int16_t gamepadDeflectionX = 0;  // signed travel, sign matches axisX
+        int16_t gamepadDeflectionY = 0;
+        uint16_t gamepadStickX = 0;  // raw ADC, 0..1023
+        uint16_t gamepadStickY = 0;
+    };
+
     // Brings up I2C and probes both controllers. Returns true when at least
     // one was found; false means the device has no way to be operated and the
     // boot must not continue into the launcher.
@@ -54,6 +86,10 @@ public:
     // Pops one event, or Event::None when the queue is empty. Safe from any
     // task. timeoutMs > 0 blocks the calling task until an event arrives.
     static Event read(uint32_t timeoutMs = 0);
+
+    // Copy of what the last poll() saw. Safe from any task: it reads a cached
+    // snapshot and never touches the I2C bus.
+    static Snapshot snapshot();
 
     // Drops anything queued, so a starting app does not inherit stale presses.
     static void flush();

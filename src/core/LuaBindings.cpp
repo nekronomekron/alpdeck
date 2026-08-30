@@ -106,6 +106,56 @@ int l_display_rect(lua_State* L) {
     return 0;
 }
 
+// circle(x, y, r [, fill]) -- x/y is the centre, not a corner.
+int l_display_circle(lua_State* L) {
+    const int16_t x = luaL_checkinteger(L, 1);
+    const int16_t y = luaL_checkinteger(L, 2);
+    const int16_t r = luaL_checkinteger(L, 3);
+    const bool fill = lua_toboolean(L, 4);
+
+    if (fill) {
+        canvas().fillCircle(x, y, r, Display::kBlack);
+    } else {
+        canvas().drawCircle(x, y, r, Display::kBlack);
+    }
+    return 0;
+}
+
+// roundrect(x, y, w, h, r [, fill])
+int l_display_roundrect(lua_State* L) {
+    const int16_t x = luaL_checkinteger(L, 1);
+    const int16_t y = luaL_checkinteger(L, 2);
+    const int16_t w = luaL_checkinteger(L, 3);
+    const int16_t h = luaL_checkinteger(L, 4);
+    const int16_t r = luaL_checkinteger(L, 5);
+    const bool fill = lua_toboolean(L, 6);
+
+    if (fill) {
+        canvas().fillRoundRect(x, y, w, h, r, Display::kBlack);
+    } else {
+        canvas().drawRoundRect(x, y, w, h, r, Display::kBlack);
+    }
+    return 0;
+}
+
+// triangle(x0, y0, x1, y1, x2, y2 [, fill])
+int l_display_triangle(lua_State* L) {
+    const int16_t x0 = luaL_checkinteger(L, 1);
+    const int16_t y0 = luaL_checkinteger(L, 2);
+    const int16_t x1 = luaL_checkinteger(L, 3);
+    const int16_t y1 = luaL_checkinteger(L, 4);
+    const int16_t x2 = luaL_checkinteger(L, 5);
+    const int16_t y2 = luaL_checkinteger(L, 6);
+    const bool fill = lua_toboolean(L, 7);
+
+    if (fill) {
+        canvas().fillTriangle(x0, y0, x1, y1, x2, y2, Display::kBlack);
+    } else {
+        canvas().drawTriangle(x0, y0, x1, y1, x2, y2, Display::kBlack);
+    }
+    return 0;
+}
+
 int l_display_line(lua_State* L) {
     canvas().drawLine(luaL_checkinteger(L, 1), luaL_checkinteger(L, 2),
                       luaL_checkinteger(L, 3), luaL_checkinteger(L, 4),
@@ -149,6 +199,69 @@ int l_input_read(lua_State* L) {
     } else {
         lua_pushstring(L, Input::eventName(event));
     }
+    return 1;
+}
+
+void setBoolField(lua_State* L, const char* key, bool value) {
+    lua_pushboolean(L, value);
+    lua_setfield(L, -2, key);
+}
+
+void setIntField(lua_State* L, const char* key, lua_Integer value) {
+    lua_pushinteger(L, value);
+    lua_setfield(L, -2, key);
+}
+
+// controllers() -> {rotary = bool, gamepad = bool}. Both are optional and the
+// device runs on either alone, so an app that draws or maps them per controller
+// has to ask rather than assume.
+int l_input_controllers(lua_State* L) {
+    lua_newtable(L);
+    setBoolField(L, "rotary", Input::hasRotary());
+    setBoolField(L, "gamepad", Input::hasGamepad());
+    return 1;
+}
+
+// state() -> {rotary = {...}, gamepad = {...}} -- what is held *right now*.
+//
+// read() is edge-triggered: it reports a press and never a release, so it
+// cannot drive a "this button is currently down" display. This returns the
+// level-triggered mirror the main loop keeps instead. Directions are in the
+// gamepad board's own frame, matching the gamepad_* event names; an app mounted
+// at an angle rotates them itself.
+int l_input_state(lua_State* L) {
+    const Input::Snapshot snapshot = Input::snapshot();
+
+    lua_newtable(L);
+
+    lua_newtable(L);
+    setBoolField(L, "present", snapshot.hasRotary);
+    setBoolField(L, "select", snapshot.rotarySelect);
+    setBoolField(L, "up", snapshot.rotaryUp);
+    setBoolField(L, "left", snapshot.rotaryLeft);
+    setBoolField(L, "down", snapshot.rotaryDown);
+    setBoolField(L, "right", snapshot.rotaryRight);
+    setIntField(L, "encoder", snapshot.rotaryEncoder);
+    lua_setfield(L, -2, "rotary");
+
+    lua_newtable(L);
+    setBoolField(L, "present", snapshot.hasGamepad);
+    setBoolField(L, "a", snapshot.gamepadA);
+    setBoolField(L, "b", snapshot.gamepadB);
+    setBoolField(L, "x", snapshot.gamepadX);
+    setBoolField(L, "y", snapshot.gamepadY);
+    setBoolField(L, "start", snapshot.gamepadStart);
+    setBoolField(L, "select", snapshot.gamepadSelect);
+    setBoolField(L, "left", snapshot.gamepadAxisX < 0);
+    setBoolField(L, "right", snapshot.gamepadAxisX > 0);
+    setBoolField(L, "up", snapshot.gamepadAxisY < 0);
+    setBoolField(L, "down", snapshot.gamepadAxisY > 0);
+    setIntField(L, "dx", snapshot.gamepadDeflectionX);
+    setIntField(L, "dy", snapshot.gamepadDeflectionY);
+    setIntField(L, "stick_x", snapshot.gamepadStickX);
+    setIntField(L, "stick_y", snapshot.gamepadStickY);
+    lua_setfield(L, -2, "gamepad");
+
     return 1;
 }
 
@@ -419,14 +532,18 @@ void installTable(lua_State* L, const char* name, const luaL_Reg* functions) {
 }
 
 const luaL_Reg kDisplay[] = {
-    {"clear", l_display_clear}, {"text", l_display_text},
-    {"rect", l_display_rect},   {"line", l_display_line},
-    {"pixel", l_display_pixel}, {"size", l_display_size},
-    {"show", l_display_show},   {nullptr, nullptr},
+    {"clear", l_display_clear},         {"text", l_display_text},
+    {"rect", l_display_rect},           {"circle", l_display_circle},
+    {"roundrect", l_display_roundrect}, {"triangle", l_display_triangle},
+    {"line", l_display_line},           {"pixel", l_display_pixel},
+    {"size", l_display_size},           {"show", l_display_show},
+    {nullptr, nullptr},
 };
 
 const luaL_Reg kInput[] = {
     {"read", l_input_read},
+    {"state", l_input_state},
+    {"controllers", l_input_controllers},
     {nullptr, nullptr},
 };
 

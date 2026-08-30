@@ -5,6 +5,7 @@
 
 local W, H = display.size()
 local count = 0
+local lastEvent = "(none yet)"
 
 local function draw()
     display.clear()
@@ -14,6 +15,12 @@ local function draw()
 
     display.text(12, 70, "turn the dial or push the stick", 1)
     display.text(12, 100, tostring(count), 4)
+
+    -- Every event is echoed, not just the ones this app acts on. A controller
+    -- that works but sends names the app does not know then looks different
+    -- from one that sends nothing at all -- which is the difference between a
+    -- stale copy on the sd card and a wiring fault.
+    display.text(12, H - 52, "last event: " .. lastEvent, 1)
 
     local luaBytes, freeHeap = sys.memory()
     display.text(12, H - 30, string.format("lua %d B   heap %d B", luaBytes, freeHeap), 1)
@@ -36,6 +43,10 @@ local EXIT = { rotary_select_long = true, gamepad_b = true }
 while true do
     local event = input.read(30000)
 
+    if event then
+        lastEvent = event
+    end
+
     if UP[event] then
         count = count + 1
         draw()
@@ -45,5 +56,7 @@ while true do
     elseif EXIT[event] then
         -- Simply return: the host restarts the launcher for us.
         return
+    elseif event then
+        draw()  -- unknown event: show what did arrive
     end
 end

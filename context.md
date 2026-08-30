@@ -102,7 +102,12 @@ Progress-Bar-API des Bootscreens ist entfernt.
   den State ab und startet dann die nächste. Ein Crash landet wieder beim
   Launcher.
 - **LuaBindings** — die öffentliche API für Apps: `display`, `input`, `fs`
-  (pfad-sandboxed), `sys`. Basis-Lib ohne `io`/`os`/`package`, also kein
+  (pfad-sandboxed), `sys`. `display` kennt neben rect/line/pixel auch
+  `circle`/`roundrect`/`triangle`. `input` hat neben dem
+  flanken-getriggerten `read()` ein level-getriggertes `state()` (was ist
+  *gerade* gedrückt, inkl. Stick-Rohwerten und Encoder-Position) sowie
+  `controllers()`; `read()` allein kann kein „Taste hält" darstellen, weil es
+  Releases gar nicht meldet. Basis-Lib ohne `io`/`os`/`package`, also kein
   `require` → eine App = eine Datei. `sys` umfasst neben
   millis/delay/log/launch/exit/memory auch: `temperature()` (Die-Sensor),
   `info()` (Chip, RAM/PSRAM, Flash, Uptime, `reset_reason` inkl. "brownout"
@@ -125,6 +130,15 @@ Progress-Bar-API des Bootscreens ist entfernt.
   *Inhalt* von `sdcard/` gehört ins Wurzelverzeichnis der Karte.
 - Der Launcher erkennt eine App an einer vorhandenen `main.lua` (nicht am
   Verzeichnis-Flag).
+- Apps: `hello` (Zähler-Demo, echot zusätzlich das zuletzt empfangene Event)
+  und `controllers` (Schaltbild beider Controller, live; nur angeschlossene
+  werden gezeichnet).
+- **Der Gamepad-Controller ist um 90° im Uhrzeigersinn montiert.** Die Treiber
+  und die `gamepad_*`-Events bleiben im Board-Koordinatensystem — das Drehen
+  ist Sache der App. Umrechnung: Board-Vektor (bx, by) → Welt (-by, bx), also
+  `gamepad_left` = physisch oben, `gamepad_up` = physisch rechts. Silkscreen
+  X/Y/A/B (oben/links/rechts/unten) wird zu Y oben, X rechts, A unten,
+  B links.
 
 ## Drei tragende Invarianten (nicht brechen)
 
@@ -257,11 +271,16 @@ brauchen immer separat `uploadfs`. Nach einem Flash-Erase ist LittleFS leer.
    ohne irgendeinen Controller stoppt der Boot jetzt absichtlich im
    Fehler-Screen.**
 2. **Input-Umbau (2 Controller, rotary_*/gamepad_*-Events) lief noch nicht auf
-   Hardware.** Zu verifizieren: Gamepad-Erkennung an 0x50,
-   Joystick-Achsen-Orientierung (`GAMEPAD_STICK_INVERT_X/Y` in AppConfig ggf.
-   drehen), Schwellen (`GAMEPAD_STICK_PRESS/RELEASE`), Fehler-Screen ohne
-   Controller. launcher.lua/hello-App brauchen `uploadfs` bzw. SD-Update, da
-   die alten Event-Namen (`cw`, `up`, …) nicht mehr gesendet werden.
+   Hardware.** Zu verifizieren mit der `controllers`-App: Gamepad-Erkennung an
+   0x50, Joystick-Achsen-Orientierung (`GAMEPAD_STICK_INVERT_X/Y` in AppConfig
+   ggf. drehen — die App zeigt Rohwerte an), Schwellen
+   (`GAMEPAD_STICK_PRESS/RELEASE`), Fehler-Screen ohne Controller.
+   **Achtung, hier schon einmal reingelaufen:** die Hello-App reagierte auf
+   keinen der beiden Controller, weil auf der SD-Karte noch die Fassung mit den
+   alten Event-Namen (`cw`, `up`, `select_long`) lag. `uploadfs` fasst die
+   Karte nicht an — nach jedem Umbau am Event-Kontrakt muss `sdcard/` von Hand
+   (oder per FTP nach `/sd`) neu kopiert werden. Launcher und App leben
+   absichtlich auf verschiedenen Speichern und driften deshalb auseinander.
 3. **Refactoring-Pass lief noch nicht auf Hardware** (nur Build-verifiziert).
    Besonders der neue FTP-Lebenszyklus (Disconnect → Shutdown → Reconnect)
    ist am Gerät noch ungetestet.

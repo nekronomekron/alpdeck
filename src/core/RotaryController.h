@@ -17,9 +17,24 @@ public:
 
     bool available() const { return _available; }
 
+    // Level-triggered view of the controller, for apps that need to know what
+    // is held right now rather than what changed. Filled by poll(), so reading
+    // it costs no I2C and is safe off the main loop.
+    struct State {
+        bool select = false;
+        bool up = false;
+        bool left = false;
+        bool down = false;
+        bool right = false;
+        int32_t encoder = 0;  // detents accumulated since boot, cw positive
+    };
+
+    State state() const;
+
     void poll(uint32_t nowMs, SeesawButtons::PublishFn publish);
 
 private:
+    int32_t _encoder = 0;
     Adafruit_seesaw _device{&Wire};
     SeesawButtons _buttons;
     bool _available = false;

@@ -4,6 +4,16 @@
 #include "core/Logger.h"
 
 namespace {
+// Index into kButtons below. state() reads the button bank by position, so the
+// two must stay in step.
+enum ButtonIndex : size_t {
+    kSelect = 0,
+    kUp,
+    kLeft,
+    kDown,
+    kRight,
+};
+
 // Only SELECT distinguishes a long press; the directional keys fire on press.
 const SeesawButtons::Button kButtons[] = {
     {Config::ROTARY_PIN_SELECT, Input::Event::RotarySelect,
@@ -40,6 +50,21 @@ bool RotaryController::begin() {
     return true;
 }
 
+RotaryController::State RotaryController::state() const {
+    State state;
+    if (!_available) {
+        return state;  // absent controller reads as "nothing held"
+    }
+
+    state.select = _buttons.pressed(kSelect);
+    state.up = _buttons.pressed(kUp);
+    state.left = _buttons.pressed(kLeft);
+    state.down = _buttons.pressed(kDown);
+    state.right = _buttons.pressed(kRight);
+    state.encoder = _encoder;
+    return state;
+}
+
 void RotaryController::poll(uint32_t nowMs, SeesawButtons::PublishFn publish) {
     if (!_available) {
         return;
@@ -48,6 +73,10 @@ void RotaryController::poll(uint32_t nowMs, SeesawButtons::PublishFn publish) {
     // Deltas accumulate on the seesaw, so a slow poll loses no detents.
     const int32_t delta = _device.getEncoderDelta();
     if (delta != 0) {
+        // Also kept as an absolute position: an event stream cannot show an
+        // app how far the dial has travelled, only that it moved.
+        _encoder += delta;
+
         const Input::Event event =
             delta > 0 ? Input::Event::RotaryCw : Input::Event::RotaryCcw;
         for (int32_t i = 0; i < abs(delta); i++) {

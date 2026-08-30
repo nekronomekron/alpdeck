@@ -13,6 +13,13 @@ GamepadController gamepad;
 QueueHandle_t events = nullptr;
 
 constexpr uint8_t kQueueLength = 16;
+
+// Written by poll() on the main loop, read by whatever task an app runs on.
+// The spinlock keeps a reader from seeing half of an update; the struct is a
+// few dozen bytes, so the critical section stays far shorter than one I2C
+// transaction.
+Input::Snapshot latest;
+portMUX_TYPE latestMux = portMUX_INITIALIZER_UNLOCKED;
 }  // namespace
 
 bool Input::init() {
@@ -58,6 +65,45 @@ void Input::poll() {
     const uint32_t nowMs = millis();
     rotary.poll(nowMs, publish);
     gamepad.poll(nowMs, publish);
+
+    // Rebuild the level-triggered mirror from what the drivers just sampled.
+    const RotaryController::State rotaryState = rotary.state();
+    const GamepadController::State gamepadState = gamepad.state();
+
+    Snapshot fresh;
+    fresh.hasRotary = rotary.available();
+    fresh.hasGamepad = gamepad.available();
+
+    fresh.rotarySelect = rotaryState.select;
+    fresh.rotaryUp = rotaryState.up;
+    fresh.rotaryLeft = rotaryState.left;
+    fresh.rotaryDown = rotaryState.down;
+    fresh.rotaryRight = rotaryState.right;
+    fresh.rotaryEncoder = rotaryState.encoder;
+
+    fresh.gamepadA = gamepadState.a;
+    fresh.gamepadB = gamepadState.b;
+    fresh.gamepadX = gamepadState.x;
+    fresh.gamepadY = gamepadState.y;
+    fresh.gamepadStart = gamepadState.start;
+    fresh.gamepadSelect = gamepadState.select;
+    fresh.gamepadAxisX = gamepadState.axisX;
+    fresh.gamepadAxisY = gamepadState.axisY;
+    fresh.gamepadDeflectionX = gamepadState.deflectionX;
+    fresh.gamepadDeflectionY = gamepadState.deflectionY;
+    fresh.gamepadStickX = gamepadState.stickX;
+    fresh.gamepadStickY = gamepadState.stickY;
+
+    portENTER_CRITICAL(&latestMux);
+    latest = fresh;
+    portEXIT_CRITICAL(&latestMux);
+}
+
+Input::Snapshot Input::snapshot() {
+    portENTER_CRITICAL(&latestMux);
+    const Snapshot copy = latest;
+    portEXIT_CRITICAL(&latestMux);
+    return copy;
 }
 
 Input::Event Input::read(uint32_t timeoutMs) {

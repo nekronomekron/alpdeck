@@ -14,6 +14,8 @@ class LuaWrapper;
 //           text(x,y,s[,size[,invert]]) -- invert draws white, for text on a
 //                                          filled rect
 //           rect(x,y,w,h[,fill]) / line(x1,y1,x2,y2) / pixel(x,y)
+//           circle(cx,cy,r[,fill]) / roundrect(x,y,w,h,r[,fill])
+//           triangle(x0,y0,x1,y1,x2,y2[,fill])
 //           size() -> w,h
 //           show()  -- pushes the frame to the panel
 //   input.read([timeoutMs]) -> string|nil
@@ -23,6 +25,19 @@ class LuaWrapper;
 //       gamepad_up, gamepad_down, gamepad_left, gamepad_right,
 //       gamepad_a, gamepad_b, gamepad_x, gamepad_y,
 //       gamepad_start, gamepad_select
+//         controllers() -> {rotary=bool, gamepad=bool}
+//         state() -> {rotary  = {present, select, up, left, down, right,
+//                                encoder},
+//                     gamepad = {present, a, b, x, y, start, select,
+//                                left, right, up, down, dx, dy,
+//                                stick_x, stick_y}}
+//       dx/dy are the stick's signed travel from centre (invert already
+//       applied, so the sign matches left/right/up/down); stick_x/stick_y are
+//       the raw ADC counts, for threshold and orientation calibration.
+//       read() is edge-triggered and reports no releases; state() is the
+//       level-triggered mirror, for "what is held right now". Gamepad
+//       directions are in the board's own frame -- an app mounted at an angle
+//       rotates them itself.
 //   fs.list(dir) -> {{name=,dir=,size=},...} / read(path) -> string|nil
 //         exists(path) -> bool / write(path, text) -> bool
 //   sys.millis() / delay(ms) / log(msg) / launch(path) / exit()
