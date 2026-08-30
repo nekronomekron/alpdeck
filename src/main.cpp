@@ -3,15 +3,15 @@
 #include <SD.h>
 
 #include "config/AppConfig.h"
-#include "core/Display.h"
-#include "core/DynamicFTPServer.h"
-#include "core/Input.h"
-#include "core/Logger.h"
-#include "core/LuaBindings.h"
-#include "core/LuaHost.h"
-#include "core/Network.h"
+#include "peripherals/Display.h"
+#include "net/DynamicFTPServer.h"
+#include "peripherals/Input.h"
+#include "utils/Logger.h"
+#include "core/lua/LuaBindings.h"
+#include "core/lua/LuaHost.h"
+#include "net/Network.h"
 #include "driver/rtc_io.h"
-#include "utils/Bootscreen.h"
+#include "ui/Bootscreen.h"
 
 namespace {
 bool sdMounted = false;

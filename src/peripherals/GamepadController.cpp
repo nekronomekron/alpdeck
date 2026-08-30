@@ -1,7 +1,7 @@
-#include "core/GamepadController.h"
+#include "peripherals/GamepadController.h"
 
 #include "config/AppConfig.h"
-#include "core/Logger.h"
+#include "utils/Logger.h"
 
 namespace {
 // Index into kButtons below. state() reads the button bank by position, so the

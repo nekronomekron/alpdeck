@@ -1,4 +1,4 @@
-#include "core/CaptivePortal.h"
+#include "net/CaptivePortal.h"
 
 #include <DNSServer.h>
 #include <WebServer.h>
@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "config/AppConfig.h"
-#include "core/Logger.h"
+#include "utils/Logger.h"
 #include "utils/JsonUtil.h"
 
 namespace {

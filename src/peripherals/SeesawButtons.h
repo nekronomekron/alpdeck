@@ -3,7 +3,7 @@
 #include <Adafruit_seesaw.h>
 #include <Arduino.h>
 
-#include "core/Input.h"
+#include "peripherals/Input.h"
 
 // Debounced button bank on one seesaw device, shared by both controller
 // drivers so the edge/long-press logic exists exactly once.

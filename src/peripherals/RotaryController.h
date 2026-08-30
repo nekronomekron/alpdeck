@@ -3,7 +3,7 @@
 #include <Adafruit_seesaw.h>
 #include <Arduino.h>
 
-#include "core/SeesawButtons.h"
+#include "peripherals/SeesawButtons.h"
 
 // Adafruit ANO Rotary Navigation Encoder (seesaw product 5740): a rotary dial
 // plus a 5-way navigation switch. Publishes the rotary_* events.

@@ -1,11 +1,11 @@
-#include "core/Network.h"
+#include "net/Network.h"
 
 #include <Preferences.h>
 #include <WiFi.h>
 
 #include "config/AppConfig.h"
-#include "core/CaptivePortal.h"
-#include "core/Logger.h"
+#include "net/CaptivePortal.h"
+#include "utils/Logger.h"
 #include "utils/JsonUtil.h"
 
 namespace {

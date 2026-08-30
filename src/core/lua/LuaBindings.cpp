@@ -1,4 +1,4 @@
-#include "core/LuaBindings.h"
+#include "core/lua/LuaBindings.h"
 
 #include <LuaWrapper.h>
 #include <SD.h>
@@ -7,10 +7,10 @@
 #include <esp_system.h>
 
 #include "config/AppConfig.h"
-#include "core/Display.h"
-#include "core/Input.h"
-#include "core/Logger.h"
-#include "core/Network.h"
+#include "peripherals/Display.h"
+#include "peripherals/Input.h"
+#include "utils/Logger.h"
+#include "net/Network.h"
 #include "core/Vfs.h"
 
 namespace {

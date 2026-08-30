@@ -1,7 +1,7 @@
-#include "core/Display.h"
+#include "peripherals/Display.h"
 
 #include "config/AppConfig.h"
-#include "core/Logger.h"
+#include "utils/Logger.h"
 
 namespace {
 GxEPD2_DISPLAY_CLASS<GxEPD2_DRIVER_CLASS, MAX_HEIGHT(GxEPD2_DRIVER_CLASS)>

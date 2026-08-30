@@ -1,7 +1,7 @@
-#include "core/SeesawButtons.h"
+#include "peripherals/SeesawButtons.h"
 
 #include "config/AppConfig.h"
-#include "core/Logger.h"
+#include "utils/Logger.h"
 
 void SeesawButtons::begin(Adafruit_seesaw& device, const Button* buttons,
                           size_t count) {

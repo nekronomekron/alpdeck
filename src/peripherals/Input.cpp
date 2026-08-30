@@ -1,11 +1,11 @@
-#include "core/Input.h"
+#include "peripherals/Input.h"
 
 #include <Wire.h>
 
 #include "config/AppConfig.h"
-#include "core/GamepadController.h"
-#include "core/Logger.h"
-#include "core/RotaryController.h"
+#include "peripherals/GamepadController.h"
+#include "utils/Logger.h"
+#include "peripherals/RotaryController.h"
 
 namespace {
 RotaryController rotary;

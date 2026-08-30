@@ -3,7 +3,7 @@
 #include <Adafruit_seesaw.h>
 #include <Arduino.h>
 
-#include "core/SeesawButtons.h"
+#include "peripherals/SeesawButtons.h"
 
 // Adafruit Mini I2C Gamepad with seesaw (product 5743): six buttons plus an
 // analog thumb stick. Publishes the gamepad_* events; the stick is digitised

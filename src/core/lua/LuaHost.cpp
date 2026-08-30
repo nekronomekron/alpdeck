@@ -1,10 +1,10 @@
-#include "core/LuaHost.h"
+#include "core/lua/LuaHost.h"
 
 #include <LuaWrapper.h>
 
 #include "config/AppConfig.h"
-#include "core/LuaBindings.h"
-#include "core/Logger.h"
+#include "core/lua/LuaBindings.h"
+#include "utils/Logger.h"
 #include "core/Vfs.h"
 
 namespace {

@@ -1,4 +1,4 @@
-#include "core/DynamicFTPServer.h"
+#include "net/DynamicFTPServer.h"
 
 #include <ESP-FTP-Server-Lib.h>
 #include <LittleFS.h>
@@ -6,7 +6,7 @@
 #include <WiFi.h>
 
 #include "config/AppConfig.h"
-#include "core/Logger.h"
+#include "utils/Logger.h"
 
 namespace {
 // Heap-allocated per init/shutdown cycle: the library has no stop(), but the
