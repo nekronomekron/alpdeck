@@ -24,12 +24,15 @@ constexpr uint8_t kQueueLength = 16;
 Snapshot latest;
 portMUX_TYPE latestMux = portMUX_INITIALIZER_UNLOCKED;
 
+uint32_t lastActivityMs = 0;
+
 // Queues one event for whichever task is reading. Handed to the drivers as a
 // callback, so it has to exist before poll() uses it.
 void publish(Event event) {
     if (events == nullptr) {
         return;
     }
+    lastActivityMs = millis();
     // Drop rather than block: input is worthless once it is stale, and the main
     // loop must never wait on a Lua app that has stopped reading.
     if (xQueueSend(events, &event, 0) != pdPASS) {
@@ -46,6 +49,7 @@ bool init() {
         return false;
     }
 
+    lastActivityMs = millis();
     Wire.begin(Config::I2C_PIN_SDA, Config::I2C_PIN_SCL, Config::I2C_FREQUENCY);
 
     // Both controllers are optional and share the daisy-chained bus; probe
@@ -126,6 +130,8 @@ void flush() {
         xQueueReset(events);
     }
 }
+
+uint32_t lastEventMs() { return lastActivityMs; }
 
 const char* eventName(Event event) {
     switch (event) {

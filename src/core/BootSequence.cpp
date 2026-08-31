@@ -195,8 +195,17 @@ void run() {
     Display::init();
     Display::drawFullWindow(Bootscreen::draw);
 
-    // Only now is there a panel worth blanking on the way down.
-    PowerButton::onBeforeSleep(Display::shutdown);
+    // Only now is there a panel worth drawing on the way down. Registered
+    // after Display::init() on purpose: a wake press too brief to count sleeps
+    // again before this point, and must not draw to an uninitialised panel.
+    PowerButton::onBeforeSleep([]() {
+        if (Settings::getBool(Settings::kStandbyScreen)) {
+            Display::drawFullWindow(Bootscreen::drawStandby);
+            Display::powerDown();
+        } else {
+            Display::shutdown();
+        }
+    });
 
     mountFilesystems();
 
@@ -239,12 +248,34 @@ void run() {
     }
 }
 
+// Sleeps the device after a stretch with no controller activity. Lives here
+// rather than in PowerButton so that module stays about the button, and so the
+// rule that defines "idle" sits next to everything else the loop pumps.
+//
+// Known limitation: a long-running app that draws without input -- a clock, a
+// slideshow -- counts as idle and will be put to sleep mid-run. Off is the
+// default, so nothing changes for anyone who has not asked for this.
+void checkIdleTimeout() {
+    const int32_t minutes = Settings::getInt(Settings::kSleepAfterMin);
+    if (minutes <= 0) {
+        return;
+    }
+
+    const uint32_t idleMs = millis() - Input::lastEventMs();
+    if (idleMs >= static_cast<uint32_t>(minutes) * 60000UL) {
+        LOGI(kLogTag, "Idle for %d minutes; sleeping",
+             static_cast<int>(minutes));
+        PowerButton::enterDeepSleep();
+    }
+}
+
 void loop() {
     Network::loop();
     FtpService::loop();
     Input::poll();
     LuaHost::loop();
     PowerButton::poll();
+    checkIdleTimeout();
 }
 
 }  // namespace BootSequence

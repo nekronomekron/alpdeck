@@ -13,7 +13,13 @@ constexpr uint16_t kBlack = 0x0000;
 constexpr uint16_t kWhite = 0xFFFF;
 
 void init();
+
+// Blanks the panel and powers it down.
 void shutdown();
+
+// Powers down leaving whatever is on the panel in place. E-paper holds its
+// image with no power, which is what makes a standby screen free.
+void powerDown();
 
 void drawFullWindow(std::function<void(Adafruit_GFX&)> drawFunction);
 void drawPartialWindow(int16_t x, int16_t y, int16_t w, int16_t h,

@@ -16,7 +16,7 @@ The standard library is opened with **base, `table`, `string` and `math` only**.
 There is no `io`, no `os`, no `package` and therefore no `require`: one app is
 one file, and `fs.*` is the only route to storage.
 
-Four globals are provided: `display`, `input`, `fs`, `sys`.
+Five globals are provided: `display`, `input`, `fs`, `sys` and `settings`.
 
 A script ends by returning. The host tears down the whole VM, so an app needs
 no cleanup of its own.
@@ -224,13 +224,93 @@ sys.exit()          -- stop this script
 sys.memory()        --> luaBytes, freeHeapBytes
 sys.temperature()   --> die temperature in °C
 sys.info()          --> table, below
-sys.wifi()          --> { connected [, ssid, ip, rssi] }
+sys.wifi()          --> { enabled, connected, portal [, ssid, ip, rssi] }
+sys.import(path)    --> a module (see below)
 ```
+
+Network control, all write-only. Nothing reads a credential back into Lua:
+
+```lua
+sys.wifi_scan()                       --> { {ssid=, rssi=, open=}, ... }
+sys.wifi_configure(ssid [, password]) -- store and connect
+sys.wifi_forget()                     -- forget the stored network
+sys.wifi_portal()                     -- raise the setup portal on demand
+sys.ftp_configure(user, password)     -- change the FTP login
+```
+
+`wifi_scan()` blocks for two to four seconds. That is fine here and nowhere
+else: apps run on their own task, so the main loop, FTP and input polling keep
+running. Results are deduplicated to the strongest access point per name and
+sorted strongest first.
+
+Any app can *set* credentials — worth being plain about. It cannot read them:
+they live in their own store and no binding returns them.
 
 `sys.launch()` only records the request — **return from the script afterwards**.
 The host tears the VM down before starting the next app, which is what keeps
 exactly one interpreter alive at a time. Launching from inside a loop does
 nothing.
+
+### Modules
+
+There is no `require` — `package` is not opened. `sys.import` is the whole
+module system:
+
+```lua
+local ui = sys.import("/lib/ui.lua")
+local keyboard = sys.import("/lib/keyboard.lua")
+```
+
+A module is a file that returns a value. It is resolved through the same path
+rule as `fs.*` (absolute, or relative to the app's folder), runs in the same
+restricted environment as its caller, and is cached per launch — two imports of
+one path return the same table, so a module may hold state.
+
+Libraries ship in `/lib` on internal flash, so they are present even with no SD
+card. `/lib/keyboard.lua` gives you a text prompt:
+
+```lua
+local password = keyboard.prompt{ title = "password", mask = true, max = 63 }
+if password then ... end        -- nil means the user backed out
+```
+
+It takes over the screen and input until Done or Back. `/lib/ui.lua` has the
+navbar, list and icons the launcher draws with, plus `ui.UP` / `ui.DOWN` /
+`ui.CONFIRM` / `ui.BACK` — event tables that map both controllers onto one
+vocabulary, so a screen never has to know which one is attached.
+
+---
+
+## settings
+
+```lua
+settings.get(name)         --> boolean or number
+settings.set(name, value)  --> boolean, false if out of range
+settings.keys()            --> { {name=, type=, min=, max=}, ... }
+```
+
+| key | type | default | |
+| --- | --- | --- | --- |
+| `wifi_enabled` | bool | true | radio off entirely when false |
+| `ftp_enabled` | bool | true | needs `wifi_enabled` to do anything |
+| `standby_screen` | bool | false | show a screen when sleeping, or blank |
+| `sleep_after_min` | int | 0 | sleep after N idle minutes; 0 never |
+| `refresh_every` | int | 8 | full refresh every Nth launcher frame |
+
+`get()` takes no default argument: the kernel declares them, so a script and
+the firmware cannot disagree about what an unset key means. An unknown name is
+an error, not a nil that would read as "off".
+
+**Setting a value states an intent; it does not perform an action.** The kernel
+watches this store and decides what a change means for the hardware — writing
+`wifi_enabled = false` is what tears down FTP and powers the radio off. That is
+why there is no `sys.wifi_enable()`: connection management stays with the
+kernel, which is also why `sys.wifi()` only reports.
+
+Apps store their own state with `fs.write` in their own folder. This table is
+for device settings, and its keys are fixed.
+
+---
 
 `sys.info()`:
 

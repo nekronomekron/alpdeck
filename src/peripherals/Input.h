@@ -96,4 +96,9 @@ void flush();
 
 const char* eventName(Event event);
 
+// millis() at the last published event, or at init() if there has been none.
+// The idle timer is built on this rather than on a counter of its own, so
+// "activity" means exactly what the queue saw.
+uint32_t lastEventMs();
+
 }  // namespace Input

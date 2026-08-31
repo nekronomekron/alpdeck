@@ -215,9 +215,11 @@ def _centered(canvas, text, y, size, font):
     return height
 
 
-def draw_bootscreen(canvas, geo, layout, error=None):
+def draw_bootscreen(canvas, geo, layout, error=None, standby=False):
     canvas.fill_screen(WHITE)
     name, subtitle, version = app_strings()
+    if standby:
+        subtitle, version = "standby", "hold the power button to wake"
 
     logo_width = layout["kLogoWidth"]
     logo_top = layout["kLogoTop"]
@@ -227,7 +229,8 @@ def draw_bootscreen(canvas, geo, layout, error=None):
     title_top = logo_top + logo_height + layout["kTitleGap"]
     title_height = _centered(canvas, name, title_top, layout["kTitleSize"], None)
     _centered(canvas, subtitle,
-              title_top + title_height + layout["kSubtitleGap"], 1, None)
+              title_top + title_height + layout["kSubtitleGap"],
+              2 if standby else 1, None)
 
     canvas.set_font(None)
     canvas.set_text_size(1)
@@ -300,12 +303,14 @@ def main(argv):
     write_gray_png(path, sheet.width, sheet.height, sheet.to_gray())
     print("wrote", path)
 
-    for filename, error in (("bootscreen.png", None),
-                            ("bootscreen-error.png",
-                             "no input controller found" + chr(10) +
-                             "connect a rotary or gamepad")):
+    for filename, error, standby in (
+            ("bootscreen.png", None, False),
+            ("bootscreen-error.png",
+             "no input controller found" + chr(10) +
+             "connect a rotary or gamepad", False),
+            ("bootscreen-standby.png", None, True)):
         screen = Canvas(400, 300)
-        draw_bootscreen(screen, geo, layout, error)
+        draw_bootscreen(screen, geo, layout, error, standby)
         path = os.path.join(out_dir, filename)
         write_gray_png(path, screen.width, screen.height, screen.to_gray())
         print("wrote", path)

@@ -53,9 +53,9 @@ physically up and `gamepad_up` is physically right. The silkscreen X/Y/A/B
 ```
 src/
   config/       AppConfig.h -- every pin, timeout and path
-  core/         the kernel: BootSequence, Vfs, and lua/
+  core/         the kernel: BootSequence, Settings, Vfs, and lua/
     lua/        LuaHost, LuaWrapper glue, LuaContext, and one file per API
-                table: DisplayApi, InputApi, FsApi, SysApi
+                table: DisplayApi, InputApi, FsApi, SysApi, SettingsApi
   peripherals/  Display, Input, RotaryController, GamepadController,
                 SeesawButtons, PowerButton
   net/          Network, CaptivePortal, FtpService -- one subsystem, one
@@ -63,6 +63,13 @@ src/
   ui/           Logo, Bootscreen
   utils/        Logger, JsonUtil
   main.cpp      twelve lines; the Arduino framework wants a setup() and a loop()
+
+data/           flashed to LittleFS with `uploadfs`
+  boot.lua      user hook, runs before the launcher
+  launcher.lua  the launcher
+  lib/          shared Lua modules, loaded with sys.import
+    ui.lua      navbar, list, icons, and the controller event vocabulary
+    keyboard.lua  on-screen keyboard
 ```
 
 Modules that are genuinely singletons are namespaces with their state in an
@@ -108,6 +115,14 @@ button.
   loop could longjmp straight through C++ destructors. Only safe because the
   panel fits one page. `beginFrame(x, y, w, h)` binds a frame to a rectangle,
   which is what `display.begin`'s region form uses.
+- **Settings** — NVS-backed device settings, each key declared in one table
+  with its type, default and range. The kernel reads several before any Lua
+  runs (whether to bring the radio up at all), which is what rules out a Lua
+  file: there is no interpreter yet at that point. Lua writes a value to state
+  an intent; a change hook lets BootSequence decide what that means for the
+  hardware, so radio management stays in the kernel. Credentials are
+  deliberately not in here — a store any app can read is not a place for a
+  password.
 - **Vfs** — one path vocabulary: `/sd/...` is the card, everything else
   LittleFS. The only place that mapping exists.
 - **Logger** (+ `utils/JsonUtil.h`) — thread-safe: lines are composed into a
@@ -164,7 +179,9 @@ only the ones that are attached).
    task: it may hold the shared SPI mutex and would block display and SD for
    the whole device.
 3. **No `io`, `os`, `package`, `dofile` or `loadfile`.** `fs.*` is the only
-   storage access and every path is checked. The last two matter because both
+   storage access and every path is checked. `sys.import` is the module system
+   that replaces `require`: same path rule, cached per launch, same restricted
+   environment. The last two matter because both
    mounts are visible to the ESP VFS, so C stdio would walk straight around the
    path sandbox.
 4. **The panel fits one page.** `MAX_HEIGHT` resolves to all 300 rows, so a
@@ -253,19 +270,23 @@ There is no CI. The gate is: both environments build, `pio check` is clean over
 
 ## Open points
 
-1. **Not everything from the refactor has been exercised on hardware.** The
-   firmware runs and the fatal halt works. Still unconfirmed on the device:
-   `display.begin` with a region, `display.bitmap` in the hello app, and the
-   redrawn logo with its hidden-line removal and filled snow caps.
-2. **Region refresh timing is a guess.** The ~400 ms figure in the docs is for
-   a whole-panel partial refresh. Measure a small region on the device before
-   quoting a number to app authors.
-3. **32-bit integers and floats in Lua** (from `LUA_32BITS`) — sufficient for
+1. **The options menu has not run on hardware.** It builds and passes the
+   harness, but the harness cannot see the C side of a binding. Worth checking
+   in order: the WiFi and FTP toggles (they touch the radio and a live server),
+   the keyboard's region refresh, a scan, and the standby screen and idle
+   timeout, which are the two that can only be observed by waiting.
+2. **Region refresh timing still unmeasured**, and the keyboard now depends on
+   it: every cursor move is one small region refresh. If that turns out to cost
+   the same as a whole panel, typing will be unpleasant and the honest answer
+   is to lean harder on the portal.
+3. **Still unconfirmed from the earlier refactor:** `display.bitmap` in the
+   hello app, and the redrawn logo with its hidden-line removal.
+4. **32-bit integers and floats in Lua** (from `LUA_32BITS`) — sufficient for
    the launcher and apps, but a deliberate trade against 64-bit and double.
-4. **Old committed WiFi credentials** (`IoT`/`05021904`) are still in the git
+5. **Old committed WiFi credentials** (`IoT`/`05021904`) are still in the git
    history (commit fc1434d). Rotate them if the repository is ever public.
-5. **No `require`,** so an app is one file. Relevant once apps get large; the
-   embedded-Lua-prelude idea was considered and set aside.
-6. **No native toolchain,** so `test/native/` sits unrun and the C++-drawn
+6. **FTP credentials default to alpdeck/alpdeck** until changed in the menu.
+   Anyone on the same network can write to flash with the default login.
+7. **No native toolchain,** so `test/native/` sits unrun and the C++-drawn
    screens can only be previewed through a ported renderer rather than the real
    code.

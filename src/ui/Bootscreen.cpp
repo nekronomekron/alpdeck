@@ -106,6 +106,23 @@ void draw(Adafruit_GFX& gfx) {
     gfx.print(version);
 }
 
+void drawStandby(Adafruit_GFX& gfx) {
+    gfx.fillScreen(kWhite);
+
+    Logo::draw(gfx, gfx.width() / 2 - kLogoWidth / 2, kLogoTop, kLogoWidth,
+               kBlack);
+
+    gfx.setFont(nullptr);
+    const int16_t titleHeight =
+        drawCentered(gfx, Config::APP_NAME, titleTop(), kTitleSize);
+    drawCentered(gfx, "standby", titleTop() + titleHeight + kSubtitleGap, 2);
+
+    gfx.setTextSize(1);
+    gfx.setTextColor(kBlack);
+    gfx.setCursor(6, gfx.height() - kVersionBottomInset);
+    gfx.print("hold the power button to wake");
+}
+
 void drawError(Adafruit_GFX& gfx, const char* message) {
     if (message == nullptr || message[0] == '\0') {
         return;

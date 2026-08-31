@@ -40,10 +40,13 @@ void init() {
 }
 
 void shutdown() {
-    LOGI(kLogTag, "Shutting down display");
+    LOGI(kLogTag, "Blanking and shutting down display");
 
     drawFullWindow([](Adafruit_GFX& gfx) { gfx.fillScreen(kWhite); });
+    powerDown();
+}
 
+void powerDown() {
     panel.powerOff();
     panel.hibernate();
 }

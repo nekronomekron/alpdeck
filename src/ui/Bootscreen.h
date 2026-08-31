@@ -19,4 +19,9 @@ void draw(Adafruit_GFX& gfx);
 // cut with an ellipsis rather than silently dropped.
 void drawError(Adafruit_GFX& gfx, const char* message);
 
+// The screen left on the panel when the device sleeps, if the standby_screen
+// setting is on. E-paper holds its image with no power, so this costs one
+// refresh on the way down and nothing after.
+void drawStandby(Adafruit_GFX& gfx);
+
 }  // namespace Bootscreen
