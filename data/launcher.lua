@@ -204,12 +204,21 @@ end
 --
 -- opts: title, items (each {label=, value=, action=, disabled=}), footer
 local function runMenu(opts)
-    local selected = 1
-    local top = 1
     local listTop = ui.LIST_TOP
     local visible = ui.visibleRows(H - 24, listTop)
 
+    -- Start on the first row that is not a group label. ui.list never marks a
+    -- header active because `selected` never points at one.
+    local selected = opts.items[1].header
+        and ui.nextSelectable(opts.items, 1, 1) or 1
+    local top = 1
+
     local function render(item, y, active)
+        if item.header then
+            ui.groupHeader(item.label, y, W)
+            return
+        end
+
         display.text(ui.MARGIN + 24, y, item.label, 2)
         local value = item.value and item.value() or nil
         if item.disabled and item.disabled() then
@@ -243,13 +252,21 @@ local function runMenu(opts)
         if event == nil or ui.BACK[event] then
             return
         elseif ui.DOWN[event] or ui.UP[event] then
-            local target = selected + (ui.DOWN[event] and 1 or -1)
-            if target >= 1 and target <= #opts.items and target ~= selected then
+            local target = ui.nextSelectable(opts.items, selected,
+                ui.DOWN[event] and 1 or -1)
+            if target then
                 selected = target
                 if selected < top then
                     top = selected
                 elseif selected >= top + visible then
                     top = selected - visible + 1
+                end
+                -- Scrolling up onto the first row of a group brings its label
+                -- along, otherwise the section arrives unlabelled. Only when
+                -- the selection is at the top of the window: shifting it in
+                -- any other case would push the selection off the bottom.
+                if selected == top and top > 1 and opts.items[top - 1].header then
+                    top = top - 1
                 end
                 paint(false)
             end
@@ -439,19 +456,27 @@ end
 local SLEEP_CHOICES = { 0, 5, 15, 30 }
 local REFRESH_CHOICES = { 1, 4, 8, 16, 32 }
 
+local function needsWifi()
+    return not settings.get("wifi_enabled")
+end
+
+-- Grouped, because ten flat rows of unrelated switches read as a wall. The
+-- group label carries the subject, so the rows under it can drop the prefix
+-- and say what they actually do: "enabled" under WIFI beats "wifi" twice.
 local function optionsMenu()
     runMenu{
         title = "options",
         items = {
+            { header = true, label = "wifi" },
             {
-                label = "wifi",
+                label = "enabled",
                 value = onOff("wifi_enabled"),
                 action = toggle("wifi_enabled"),
             },
             {
-                label = "wifi setup",
+                label = "setup",
                 action = function() wifiSetup() end,
-                disabled = function() return not settings.get("wifi_enabled") end,
+                disabled = needsWifi,
             },
             {
                 label = "setup portal",
@@ -471,24 +496,23 @@ local function optionsMenu()
                     showMessage("wifi", { "stored network forgotten." })
                 end,
             },
+
+            { header = true, label = "ftp" },
             {
-                label = "ftp server",
+                label = "enabled",
                 value = onOff("ftp_enabled"),
                 action = toggle("ftp_enabled"),
                 -- Shown but inert while the radio is off: hiding it would just
                 -- raise the question of whether the firmware still has FTP.
-                disabled = function() return not settings.get("wifi_enabled") end,
+                disabled = needsWifi,
             },
             {
-                label = "ftp login",
+                label = "login",
                 action = function() ftpLogin() end,
-                disabled = function() return not settings.get("wifi_enabled") end,
+                disabled = needsWifi,
             },
-            {
-                label = "standby screen",
-                value = onOff("standby_screen"),
-                action = toggle("standby_screen"),
-            },
+
+            { header = true, label = "power" },
             {
                 label = "sleep after",
                 value = function()
@@ -499,6 +523,13 @@ local function optionsMenu()
                     cycle("sleep_after_min", SLEEP_CHOICES, direction)
                 end,
             },
+            {
+                label = "standby screen",
+                value = onOff("standby_screen"),
+                action = toggle("standby_screen"),
+            },
+
+            { header = true, label = "general" },
             {
                 label = "full refresh",
                 value = function()

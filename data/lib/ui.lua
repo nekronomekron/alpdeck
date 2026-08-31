@@ -149,6 +149,31 @@ function ui.scrollbar(items, top, visible, width, height, listTop)
     display.rect(x, thumbY, 4, thumbH, true)
 end
 
+-- A section label with a rule running out to the right margin. Occupies a full
+-- row so the list geometry stays uniform -- a shorter header would mean every
+-- offset, and the scrollbar, having to know which rows are which.
+function ui.groupHeader(text, y, width)
+    local label = text:upper()
+    display.text(ui.MARGIN, y + 6, label, 1)
+
+    local startX = ui.MARGIN + display.measure(label, 1) + 6
+    display.rect(startX, y + 9, width - ui.MARGIN - startX, 1, true)
+end
+
+-- Walks to the next row that can actually be selected, skipping group headers.
+-- Returns nil at either end, which is what makes the list stop there instead of
+-- landing on a label.
+function ui.nextSelectable(items, from, direction)
+    local index = from + direction
+    while index >= 1 and index <= #items do
+        if not items[index].header then
+            return index
+        end
+        index = index + direction
+    end
+    return nil
+end
+
 -- Right-aligned label on a row, for a version or a setting's value.
 function ui.rowValue(text, y, width)
     if text == nil or text == "" then

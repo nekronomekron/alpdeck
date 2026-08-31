@@ -103,7 +103,12 @@ def scenarios():
         yield ("menu-options-wifi-off",) + _run(
             LAUNCHER, to_menu, settings={"wifi_enabled": False})
 
-        # Row 10 of the options list.
+        # Scrolled to the bottom group: the check that a header travels with
+        # the first row under it instead of the section arriving unlabelled.
+        yield ("menu-options-scrolled",) + _run(
+            LAUNCHER, to_menu + ["rotary_cw"] * 8, wifi=WIFI_ONLINE)
+
+        # The last selectable row of the options list.
         yield ("menu-device-info",) + _run(
             LAUNCHER, to_menu + ["rotary_cw"] * 9 + ["rotary_select"],
             wifi=WIFI_ONLINE)
