@@ -8,9 +8,11 @@
 -- it returns a table of metadata; it is parsed with load() rather than a JSON
 -- reader, because the device already has an interpreter.
 --
--- Sections below, in order: layout, model, discovery, drawing, input. Nothing
--- draws outside the drawing section, and nothing mutates the model outside the
--- model section.
+-- Sections, in order: layout, model, discovery, drawing, screens, input.
+-- Nothing draws outside the drawing section, and nothing mutates the model
+-- outside the model section.
+
+local ui = sys.import("/lib/ui.lua")
 
 local W, H = display.size()
 local INFO = sys.info()
@@ -21,14 +23,7 @@ local APPS_DIR = "/sd/apps"
 local ENTRY = "main.lua"
 local MANIFEST = "app.lua"
 
-local MARGIN = 12
-local NAV_HEIGHT = 40        -- navbar, closed by a full-width 2px rule
-local ROW_HEIGHT = 22
-local LIST_TOP = NAV_HEIGHT + 14
-local VISIBLE = math.floor((H - LIST_TOP - 6) / ROW_HEIGHT)
-
--- Ghosting builds up over partial refreshes; clear it periodically.
-local FULL_REFRESH_EVERY = 8
+local VISIBLE = ui.visibleRows(H)
 
 -- Redraw on this cadence even with no input, so the wifi indicator does not go
 -- stale on a device sitting idle.
@@ -36,39 +31,43 @@ local IDLE_REDRAW_MS = 30000
 
 --------------------------------------------------------------------- model --
 
+-- Focus is one index over [menu, app1 .. appN]: MENU_FOCUS is the hamburger,
+-- 1 upwards are apps. One rule, no special cases, and it is why moving up from
+-- the first app reaches the menu instead of stopping.
+local MENU_FOCUS = 0
+
 local state = {
     apps = {},
-    selected = 1,
+    focus = 1,
     top = 1,
     refreshes = 0,
 }
 
--- Moves the selection and scrolls the window to keep it visible. Returns true
--- only when something changed, so the caller does not pay 400ms for a refresh
--- with nothing new to show.
+-- Moves focus and scrolls the window to keep it visible. Returns true only when
+-- something changed, so the caller does not pay 400ms for a refresh with
+-- nothing new to show.
+--
+-- Clamped, not wrapped, at both ends: reaching an end stops there. Wrapping
+-- made a long list feel like it had lost your place.
 local function moveBy(delta)
-    if #state.apps == 0 then
-        return false
-    end
-
-    -- Clamped, not wrapped: reaching an end stops there. Wrapping made a long
-    -- list feel like it had lost your place.
-    local target = state.selected + delta
-    if target < 1 then
-        target = 1
+    local target = state.focus + delta
+    if target < MENU_FOCUS then
+        target = MENU_FOCUS
     elseif target > #state.apps then
-        target = #state.apps
+        target = math.max(MENU_FOCUS, #state.apps)
     end
 
-    if target == state.selected then
+    if target == state.focus then
         return false
     end
-    state.selected = target
+    state.focus = target
 
-    if state.selected < state.top then
-        state.top = state.selected
-    elseif state.selected >= state.top + VISIBLE then
-        state.top = state.selected - VISIBLE + 1
+    if state.focus >= 1 then
+        if state.focus < state.top then
+            state.top = state.focus
+        elseif state.focus >= state.top + VISIBLE then
+            state.top = state.focus - VISIBLE + 1
+        end
     end
     return true
 end
@@ -102,12 +101,12 @@ end
 
 local function discover()
     state.apps = {}
-    state.selected = 1
     state.top = 1
 
     local entries = fs.list(APPS_DIR)
     if not entries then
         sys.log("discover: fs.list(" .. APPS_DIR .. ") returned nil")
+        state.focus = MENU_FOCUS
         return
     end
 
@@ -137,143 +136,387 @@ local function discover()
     table.sort(state.apps, function(a, b)
         return a.name:lower() < b.name:lower()
     end)
+
+    -- With no apps there is nothing to focus but the menu, which is also the
+    -- only thing that can fix the situation.
+    state.focus = #state.apps > 0 and 1 or MENU_FOCUS
 end
 
 ------------------------------------------------------------------- drawing --
 
--- Four ascending signal bars, 18px wide in total. The filled count follows the
--- RSSI; offline draws all bars hollow with a strike-through.
-local function drawWifiIcon(x, baseline)
-    local wifi = sys.wifi()
-    local bars = 0
-    if wifi.connected then
-        local rssi = wifi.rssi or -100
-        bars = (rssi >= -55 and 4) or (rssi >= -65 and 3)
-            or (rssi >= -75 and 2) or 1
-    end
-
-    for i = 1, 4 do
-        local h = 4 + (i - 1) * 3
-        display.rect(x + (i - 1) * 5, baseline - h, 3, h, i <= bars)
-    end
-
-    if bars == 0 then
-        display.line(x - 1, baseline, x + 18, baseline - 14)
-    end
-end
-
--- Hamburger placeholder for the options menu (the menu itself comes later).
-local function drawMenuIcon(x, y)
-    for i = 0, 2 do
-        display.rect(x, y + i * 5, 16, 2, true)
-    end
-end
-
--- The whole launcher uses the built-in 6x8 face: its blocky cells are the
--- alpdeck look, and they line up exactly with the pixel grid. The other faces
--- stay available to apps through display.font().
-local function drawNavbar()
-    local titleW = display.measure("alpdeck", 3)
-    display.text(MARGIN, 8, "alpdeck", 3)
-
-    display.text(MARGIN + titleW + 6, 24, VERSION, 1)
-
-    local menuX = W - MARGIN - 16
-    drawMenuIcon(menuX, 14)
-    drawWifiIcon(menuX - 10 - 18, 28)
-
-    display.rect(0, NAV_HEIGHT, W, 2, true)
-end
-
 local function drawEmpty()
-    display.text(MARGIN, LIST_TOP + 10, "no apps found", 2)
-    display.text(MARGIN, LIST_TOP + 40, APPS_DIR .. "/<name>/" .. ENTRY, 1)
-    display.text(MARGIN, LIST_TOP + 54, "add apps to the sd card, then press", 1)
-    display.text(MARGIN, LIST_TOP + 66, "select to rescan.", 1)
+    display.text(ui.MARGIN, ui.LIST_TOP + 10, "no apps found", 2)
+    display.text(ui.MARGIN, ui.LIST_TOP + 40, APPS_DIR .. "/<name>/" .. ENTRY, 1)
+    display.text(ui.MARGIN, ui.LIST_TOP + 54, "add apps to the sd card, then press", 1)
+    display.text(ui.MARGIN, ui.LIST_TOP + 66, "select to rescan.", 1)
 end
 
--- The selected row is a filled black bar, so everything on it switches to
--- white ink. Getting this wrong is how the list once rendered black on black
--- and looked empty.
-local function drawRow(app, index, y)
-    local active = index == state.selected
-
-    if active then
-        display.rect(MARGIN, y - 4, W - 2 * MARGIN, ROW_HEIGHT, true)
-        display.color("white")
-        display.text(MARGIN + 6, y, ">", 2)
-    end
-
-    display.text(MARGIN + 24, y, app.name, 2)
+local function drawAppRow(app, y, active)
+    display.text(ui.MARGIN + 24, y, app.name, 2)
 
     local label = app.version or ""
     if app.stale then
         label = (label ~= "" and label .. "  " or "") .. "api!"
     end
-    if label ~= "" then
-        local labelW = display.measure(label, 1)
-        display.text(W - MARGIN - 10 - labelW, y + 4, label, 1)
-    end
-
-    display.color("black")
-end
-
--- Right-edge scrollbar, only when the list does not fit. The thumb tracks the
--- scroll window, not the selection.
-local function drawScrollbar()
-    if #state.apps <= VISIBLE then
-        return
-    end
-
-    local x = W - 8
-    local trackY = LIST_TOP
-    local trackH = H - 8 - trackY
-    display.rect(x, trackY, 4, trackH)
-
-    local thumbH = math.max(10, math.floor(trackH * VISIBLE / #state.apps))
-    local maxTop = #state.apps - VISIBLE
-    local thumbY = trackY + math.floor((trackH - thumbH) * (state.top - 1) / maxTop)
-    display.rect(x, thumbY, 4, thumbH, true)
+    ui.rowValue(label, y, W)
 end
 
 local function draw()
-    -- The refresh mode is fixed for the life of the frame, so it is chosen
-    -- here at begin() and nowhere else.
+    -- The refresh mode is fixed for the life of the frame, so it is chosen here
+    -- at begin() and nowhere else. How often a full refresh happens is a
+    -- setting, because how quickly ghosting builds up depends on the panel.
     state.refreshes = state.refreshes + 1
-    local full = state.refreshes % FULL_REFRESH_EVERY == 1
+    local every = settings.get("refresh_every")
+    local full = state.refreshes % every == 1
 
     display.begin(full and "full" or "partial")
-    drawNavbar()
+
+    ui.navbar{
+        width = W,
+        title = "alpdeck",
+        version = VERSION,
+        wifi = sys.wifi(),
+        menuFocused = state.focus == MENU_FOCUS,
+    }
 
     if #state.apps == 0 then
         drawEmpty()
     else
-        for offset = 0, VISIBLE - 1 do
-            local index = state.top + offset
-            local app = state.apps[index]
-            if app then
-                drawRow(app, index, LIST_TOP + offset * ROW_HEIGHT)
-            end
-        end
-        drawScrollbar()
+        ui.list{
+            items = state.apps,
+            selected = state.focus,
+            top = state.top,
+            visible = VISIBLE,
+            width = W,
+            height = H,
+            render = drawAppRow,
+        }
     end
 
     display.show()
 end
 
---------------------------------------------------------------------- input --
+------------------------------------------------------------------- screens --
 
--- Event names carry their source controller (rotary_* / gamepad_*) so apps can
--- tell the two apart. The launcher accepts both, so either controller alone
--- can drive it.
-local MOVE_DOWN = { rotary_cw = true, rotary_down = true, gamepad_down = true }
-local MOVE_UP = { rotary_ccw = true, rotary_up = true, gamepad_up = true }
-local LAUNCH = { rotary_select = true, gamepad_a = true, gamepad_start = true }
-local RESCAN = {
-    rotary_select_long = true,
-    rotary_left = true,
-    gamepad_select = true,
-}
+-- A modal list screen: draws itself, runs its own loop, returns when the user
+-- backs out. Every sub-screen in the launcher is one of these, so they all
+-- behave the same way.
+--
+-- opts: title, items (each {label=, value=, action=, disabled=}), footer
+local function runMenu(opts)
+    local selected = 1
+    local top = 1
+    local listTop = ui.LIST_TOP
+    local visible = ui.visibleRows(H - 24, listTop)
+
+    local function render(item, y, active)
+        display.text(ui.MARGIN + 24, y, item.label, 2)
+        local value = item.value and item.value() or nil
+        if item.disabled and item.disabled() then
+            value = value and (value .. "  --") or "--"
+        end
+        ui.rowValue(value, y, W)
+    end
+
+    local function paint(full)
+        display.begin(full and "full" or "partial")
+        ui.header(opts.title, W)
+        ui.list{
+            items = opts.items,
+            selected = selected,
+            top = top,
+            visible = visible,
+            width = W,
+            height = H - 24,
+            render = render,
+        }
+        ui.footer(opts.footer or "select to change   long-press / B to go back",
+            W, H)
+        display.show()
+    end
+
+    paint(true)
+
+    while true do
+        local event = input.read(120000)
+
+        if event == nil or ui.BACK[event] then
+            return
+        elseif ui.DOWN[event] or ui.UP[event] then
+            local target = selected + (ui.DOWN[event] and 1 or -1)
+            if target >= 1 and target <= #opts.items and target ~= selected then
+                selected = target
+                if selected < top then
+                    top = selected
+                elseif selected >= top + visible then
+                    top = selected - visible + 1
+                end
+                paint(false)
+            end
+        elseif ui.CONFIRM[event] or ui.LEFT[event] or ui.RIGHT[event] then
+            local item = opts.items[selected]
+            if item and item.action and not (item.disabled and item.disabled()) then
+                -- The action owns the screen while it runs, so repaint fully
+                -- afterwards rather than assuming anything survived.
+                if item.action(ui.LEFT[event] and -1 or 1) == "close" then
+                    return
+                end
+                paint(true)
+            end
+        end
+    end
+end
+
+-- A full-screen message with a single way out. Used for results and for the
+-- things that take long enough to need saying.
+local function showMessage(title, lines, footer)
+    display.begin("full")
+    ui.header(title, W)
+    for index, line in ipairs(lines) do
+        display.text(ui.MARGIN, ui.LIST_TOP + (index - 1) * 14, line, 1)
+    end
+    ui.footer(footer or "any key to go back", W, H)
+    display.show()
+
+    input.read(120000)
+end
+
+-- Drawn before a blocking call, so the device does not look wedged during the
+-- two to four seconds a scan takes.
+local function showBusy(title, text)
+    display.begin("partial")
+    ui.header(title, W)
+    display.text(ui.MARGIN, ui.LIST_TOP + 10, text, 2)
+    display.show()
+end
+
+local function wifiSetup()
+    if not settings.get("wifi_enabled") then
+        showMessage("wifi setup", { "wifi is switched off.",
+            "turn it on first." })
+        return
+    end
+
+    showBusy("wifi setup", "scanning...")
+
+    local ok, networks = pcall(sys.wifi_scan)
+    if not ok or not networks or #networks == 0 then
+        showMessage("wifi setup", { "no networks found.",
+            "move closer and try again." })
+        return
+    end
+
+    local items = {}
+    for _, network in ipairs(networks) do
+        items[#items + 1] = {
+            label = network.ssid,
+            value = function()
+                return (network.open and "open  " or "") .. network.rssi .. "dBm"
+            end,
+            action = function()
+                local password = ""
+                if not network.open then
+                    local keyboard = sys.import("/lib/keyboard.lua")
+                    password = keyboard.prompt{
+                        title = network.ssid,
+                        mask = true,
+                        max = 63,
+                    }
+                    if password == nil then
+                        return  -- cancelled: back to the network list
+                    end
+                end
+
+                sys.wifi_configure(network.ssid, password)
+                showMessage("wifi setup", {
+                    "connecting to " .. network.ssid .. "...",
+                    "",
+                    "this takes a few seconds. the",
+                    "signal icon shows the result.",
+                })
+                return "close"
+            end,
+        }
+    end
+
+    runMenu{
+        title = "choose a network",
+        items = items,
+        footer = "select to join   long-press / B to go back",
+    }
+end
+
+local function ftpLogin()
+    local keyboard = sys.import("/lib/keyboard.lua")
+
+    local user = keyboard.prompt{ title = "ftp user", value = "alpdeck", max = 31 }
+    if user == nil or user == "" then
+        return
+    end
+
+    local password = keyboard.prompt{ title = "ftp password", mask = true, max = 31 }
+    if password == nil or password == "" then
+        return
+    end
+
+    sys.ftp_configure(user, password)
+    showMessage("ftp login", { "saved. the server restarts with",
+        "the new login." })
+end
+
+local function deviceInfo()
+    local info = sys.info()
+    local wifi = sys.wifi()
+    local luaBytes, freeHeap = sys.memory()
+
+    local lines = {
+        string.format("%s rev %d, %d cores @ %d MHz", info.chip, info.revision,
+            info.cores, info.cpu_mhz),
+        string.format("firmware %s   api %d", info.version, info.api),
+        "",
+        string.format("heap    %d free of %d, low %d", info.heap_free_bytes,
+            info.heap_bytes, info.heap_min_free_bytes),
+        string.format("psram   %d free of %d", info.psram_free_bytes,
+            info.psram_bytes),
+        string.format("flash   %d bytes", info.flash_bytes),
+        string.format("lua     %d bytes in this script", luaBytes),
+        "",
+        string.format("uptime  %d s", info.uptime_ms // 1000),
+        string.format("temp    %.1f C (die, not room)", sys.temperature()),
+        string.format("boot    %s", info.reset_reason),
+        "",
+    }
+
+    if not wifi.enabled then
+        lines[#lines + 1] = "wifi    switched off"
+    elseif wifi.connected then
+        lines[#lines + 1] = string.format("wifi    %s", wifi.ssid or "?")
+        lines[#lines + 1] = string.format("ip      %s   %d dBm", wifi.ip or "?",
+            wifi.rssi or 0)
+    elseif wifi.portal then
+        lines[#lines + 1] = "wifi    setup portal is up"
+    else
+        lines[#lines + 1] = "wifi    not connected"
+    end
+
+    showMessage("device", lines)
+end
+
+-- Steps a numeric setting through a list of sensible values rather than one
+-- unit at a time: nobody wants to press right thirty times.
+local function cycle(key, choices, direction)
+    local current = settings.get(key)
+    local index = 1
+    for position, value in ipairs(choices) do
+        if value == current then
+            index = position
+            break
+        end
+    end
+
+    index = index + (direction or 1)
+    if index < 1 then
+        index = #choices
+    elseif index > #choices then
+        index = 1
+    end
+
+    settings.set(key, choices[index])
+end
+
+local function onOff(key)
+    return function()
+        return settings.get(key) and "on" or "off"
+    end
+end
+
+local function toggle(key)
+    return function()
+        settings.set(key, not settings.get(key))
+    end
+end
+
+local SLEEP_CHOICES = { 0, 5, 15, 30 }
+local REFRESH_CHOICES = { 1, 4, 8, 16, 32 }
+
+local function optionsMenu()
+    runMenu{
+        title = "options",
+        items = {
+            {
+                label = "wifi",
+                value = onOff("wifi_enabled"),
+                action = toggle("wifi_enabled"),
+            },
+            {
+                label = "wifi setup",
+                action = function() wifiSetup() end,
+                disabled = function() return not settings.get("wifi_enabled") end,
+            },
+            {
+                label = "setup portal",
+                action = function()
+                    sys.wifi_portal()
+                    showMessage("setup portal", {
+                        "the alpdeck access point is up.",
+                        "join it from a phone or laptop",
+                        "to choose a network.",
+                    })
+                end,
+            },
+            {
+                label = "forget network",
+                action = function()
+                    sys.wifi_forget()
+                    showMessage("wifi", { "stored network forgotten." })
+                end,
+            },
+            {
+                label = "ftp server",
+                value = onOff("ftp_enabled"),
+                action = toggle("ftp_enabled"),
+                -- Shown but inert while the radio is off: hiding it would just
+                -- raise the question of whether the firmware still has FTP.
+                disabled = function() return not settings.get("wifi_enabled") end,
+            },
+            {
+                label = "ftp login",
+                action = function() ftpLogin() end,
+                disabled = function() return not settings.get("wifi_enabled") end,
+            },
+            {
+                label = "standby screen",
+                value = onOff("standby_screen"),
+                action = toggle("standby_screen"),
+            },
+            {
+                label = "sleep after",
+                value = function()
+                    local minutes = settings.get("sleep_after_min")
+                    return minutes == 0 and "never" or (minutes .. " min")
+                end,
+                action = function(direction)
+                    cycle("sleep_after_min", SLEEP_CHOICES, direction)
+                end,
+            },
+            {
+                label = "full refresh",
+                value = function()
+                    return "every " .. settings.get("refresh_every")
+                end,
+                action = function(direction)
+                    cycle("refresh_every", REFRESH_CHOICES, direction)
+                end,
+            },
+            {
+                label = "device info",
+                action = function() deviceInfo() end,
+            },
+        },
+    }
+end
+
+--------------------------------------------------------------------- input --
 
 discover()
 draw()
@@ -283,23 +526,26 @@ while true do
 
     if event == nil then
         draw()  -- timeout: keep the wifi indicator honest
-    elseif MOVE_DOWN[event] then
+    elseif ui.DOWN[event] then
         if moveBy(1) then draw() end
-    elseif MOVE_UP[event] then
+    elseif ui.UP[event] then
         if moveBy(-1) then draw() end
-    elseif LAUNCH[event] then
-        if #state.apps == 0 then
+    elseif ui.CONFIRM[event] then
+        if state.focus == MENU_FOCUS then
+            optionsMenu()
+            draw()
+        elseif #state.apps == 0 then
             discover()
             draw()
         else
-            local app = state.apps[state.selected]
+            local app = state.apps[state.focus]
             sys.log("launching " .. app.path)
             sys.launch(app.path)
             -- Returning hands control back to the host, which tears this state
             -- down before starting the app. Never launch from inside the loop.
             return
         end
-    elseif RESCAN[event] then
+    elseif ui.BACK[event] or ui.LEFT[event] then
         discover()
         draw()
     end

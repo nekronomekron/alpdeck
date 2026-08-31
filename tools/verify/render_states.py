@@ -51,7 +51,8 @@ def _empty_card():
     return root
 
 
-def _run(script_path, events, wifi=WIFI_OFFLINE, sd_dir=None, app_root=""):
+def _run(script_path, events, wifi=WIFI_OFFLINE, sd_dir=None, app_root="",
+         settings=None):
     """Run one script the way the host would.
 
     app_root mirrors what BootSequence sets before a launch: an app is rooted
@@ -62,7 +63,7 @@ def _run(script_path, events, wifi=WIFI_OFFLINE, sd_dir=None, app_root=""):
     vfs = luaenv.VirtualFs(sd_dir=sd_dir)
     vfs.sandbox_root = app_root
     host = luaenv.Host(panel=panel, vfs=vfs, events=list(events), wifi=wifi,
-                       stop_when_drained=True)
+                       stop_when_drained=True, settings=settings)
     ok, error = luaenv.run_file(script_path, host)
     return ok, error, host
 
@@ -87,9 +88,46 @@ def scenarios():
         yield ("launcher-scrolled",) + _run(
             LAUNCHER, ["rotary_cw"] * 9, wifi=WIFI_ONLINE, sd_dir=many
         )
-        yield ("launcher-wrap-to-last",) + _run(
+        # Up from the first app reaches the menu icon rather than stopping or
+        # wrapping to the end -- the focus model, in one picture.
+        yield ("launcher-menu-focus",) + _run(
             LAUNCHER, ["rotary_ccw"], wifi=WIFI_ONLINE, sd_dir=many
         )
+
+        # --- the options menu and everything reachable from it ---
+        to_menu = ["rotary_ccw", "rotary_select"]
+
+        yield ("menu-options",) + _run(LAUNCHER, to_menu, wifi=WIFI_ONLINE)
+
+        # With the radio off, the rows that depend on it are shown but inert.
+        yield ("menu-options-wifi-off",) + _run(
+            LAUNCHER, to_menu, settings={"wifi_enabled": False})
+
+        # Row 10 of the options list.
+        yield ("menu-device-info",) + _run(
+            LAUNCHER, to_menu + ["rotary_cw"] * 9 + ["rotary_select"],
+            wifi=WIFI_ONLINE)
+
+        # Row 2: wifi setup, which scans and lists what it found.
+        yield ("menu-wifi-scan",) + _run(
+            LAUNCHER, to_menu + ["rotary_cw", "rotary_select"], wifi=WIFI_ONLINE)
+
+        # Row 6: ftp login, which is the first screen to raise the keyboard.
+        to_keyboard = to_menu + ["rotary_cw"] * 5 + ["rotary_select"]
+        yield ("keyboard-letters",) + _run(LAUNCHER, to_keyboard, wifi=WIFI_ONLINE)
+
+        # Down to the action row, right to the layer key, and switch layers.
+        yield ("keyboard-symbols",) + _run(
+            LAUNCHER,
+            to_keyboard + ["gamepad_down"] * 3 + ["gamepad_right", "gamepad_a"],
+            wifi=WIFI_ONLINE)
+
+        # Typing: the dial walks the grid in reading order, then select types.
+        yield ("keyboard-typed",) + _run(
+            LAUNCHER,
+            to_keyboard + ["rotary_cw", "rotary_cw", "rotary_select",
+                           "rotary_cw", "rotary_select"],
+            wifi=WIFI_ONLINE)
 
         stale = _synthetic_card(4, stale_every=2)
         temporaries.append(stale)
