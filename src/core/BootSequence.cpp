@@ -10,7 +10,7 @@
 #include "core/lua/LuaContext.h"
 #include "core/lua/LuaHost.h"
 #include "net/FtpService.h"
-#include "net/Network.h"
+#include "net/NetworkService.h"
 #include "peripherals/Display.h"
 #include "peripherals/Input.h"
 #include "peripherals/PowerButton.h"
@@ -73,7 +73,7 @@ void startApp(const String& path) {
 // the connect callback, which is what keeps one rule in one place.
 void applyFtpSetting() {
     const bool wanted = Settings::getBool(Settings::kFtpEnabled) &&
-                        Network::isConnected();
+                        NetworkService::isConnected();
     if (wanted) {
         FtpService::start(sdMounted);
     } else {
@@ -85,7 +85,7 @@ void applyFtpSetting() {
 // this decides what it means for the hardware.
 void onSettingChanged(const char* key) {
     if (strcmp(key, Settings::kWifiEnabled) == 0) {
-        Network::setEnabled(Settings::getBool(Settings::kWifiEnabled));
+        NetworkService::setEnabled(Settings::getBool(Settings::kWifiEnabled));
         applyFtpSetting();
     } else if (strcmp(key, Settings::kFtpEnabled) == 0) {
         applyFtpSetting();
@@ -223,9 +223,9 @@ void run() {
     // FTP only exists once there is a network to serve it on, so it is started
     // from the connect callback rather than here -- that covers both a
     // boot-time auto-connect and credentials arriving later via the portal.
-    Network::onConnected(applyFtpSetting);
-    Network::onDisconnected(FtpService::stop);
-    Network::init();
+    NetworkService::onConnected(applyFtpSetting);
+    NetworkService::onDisconnected(FtpService::stop);
+    NetworkService::init();
 
     if (!LuaHost::init()) {
         fail("system error: lua host failed");
@@ -270,7 +270,7 @@ void checkIdleTimeout() {
 }
 
 void loop() {
-    Network::loop();
+    NetworkService::loop();
     FtpService::loop();
     Input::poll();
     LuaHost::loop();

@@ -4,7 +4,7 @@
 
 #include <functional>
 
-namespace Network {
+namespace NetworkService {
 
 constexpr const char* kLogTag = "Network";
 
@@ -44,4 +44,4 @@ void onDisconnected(std::function<void()> callback);
 // Forgets the stored network and raises the portal.
 void forget();
 
-}  // namespace Network
+}  // namespace NetworkService

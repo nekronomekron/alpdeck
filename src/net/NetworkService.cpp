@@ -1,15 +1,14 @@
-#include "net/Network.h"
-
 #include <Preferences.h>
 #include <WiFi.h>
 
 #include "config/AppConfig.h"
 #include "core/Settings.h"
 #include "net/CaptivePortal.h"
+#include "net/NetworkService.h"
 #include "utils/JsonUtil.h"
 #include "utils/Logger.h"
 
-namespace Network {
+namespace NetworkService {
 namespace {
 
 Preferences prefs;
@@ -296,4 +295,4 @@ void onDisconnected(std::function<void()> callback) {
     disconnectedCallback = std::move(callback);
 }
 
-}  // namespace Network
+}  // namespace NetworkService

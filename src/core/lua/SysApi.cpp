@@ -10,7 +10,7 @@
 #include "core/lua/LuaApi.h"
 #include "core/lua/LuaContext.h"
 #include "net/FtpService.h"
-#include "net/Network.h"
+#include "net/NetworkService.h"
 #include "utils/Logger.h"
 
 namespace SysApi {
@@ -58,9 +58,8 @@ int exit(lua_State* L) {
 
 int memory(lua_State* L) {
     LuaWrapper* self = *static_cast<LuaWrapper**>(lua_getextraspace(L));
-    lua_pushinteger(L, self != nullptr
-                           ? static_cast<lua_Integer>(self->memoryUsed())
-                           : 0);
+    lua_pushinteger(
+        L, self != nullptr ? static_cast<lua_Integer>(self->memoryUsed()) : 0);
     lua_pushinteger(
         L, static_cast<lua_Integer>(heap_caps_get_free_size(MALLOC_CAP_8BIT)));
     return 2;
@@ -115,7 +114,8 @@ int info(lua_State* L) {
     LuaApi::setField(L, "revision",
                      static_cast<lua_Integer>(ESP.getChipRevision()));
     LuaApi::setField(L, "cores", static_cast<lua_Integer>(ESP.getChipCores()));
-    LuaApi::setField(L, "cpu_mhz", static_cast<lua_Integer>(ESP.getCpuFreqMHz()));
+    LuaApi::setField(L, "cpu_mhz",
+                     static_cast<lua_Integer>(ESP.getCpuFreqMHz()));
 
     LuaApi::setField(L, "flash_bytes",
                      static_cast<lua_Integer>(ESP.getFlashChipSize()));
@@ -135,7 +135,6 @@ int info(lua_State* L) {
 
     return 1;
 }
-
 
 // Registry key for the module cache. Per lua_State, and a state lives for one
 // launch, so a module is loaded at most once per app run.
@@ -210,7 +209,7 @@ int import(lua_State* L) {
 // Blocks for a couple of seconds. That is fine here and nowhere else: Lua runs
 // on its own task, so the main loop, FTP and input polling all keep running.
 int wifiScan(lua_State* L) {
-    if (!Network::isEnabled()) {
+    if (!NetworkService::isEnabled()) {
         return luaL_error(L, "wifi is switched off");
     }
 
@@ -292,19 +291,19 @@ int wifiScan(lua_State* L) {
 int wifiConfigure(lua_State* L) {
     const char* ssid = luaL_checkstring(L, 1);
     const char* password = luaL_optstring(L, 2, "");
-    Network::configure(ssid, password);
+    NetworkService::configure(ssid, password);
     return 0;
 }
 
 int wifiForget(lua_State* L) {
     (void)L;
-    Network::forget();
+    NetworkService::forget();
     return 0;
 }
 
 int wifiPortal(lua_State* L) {
     (void)L;
-    Network::startSetupPortal();
+    NetworkService::startSetupPortal();
     return 0;
 }
 
@@ -319,14 +318,14 @@ int ftpConfigure(lua_State* L) {
 // wifi() -> table {connected[, ssid, ip, rssi]}. Read-only status; managing
 // the connection stays with the kernel (portal), not with apps.
 int wifi(lua_State* L) {
-    const bool connected = Network::isConnected();
+    const bool connected = NetworkService::isConnected();
 
     lua_newtable(L);
     LuaApi::setField(L, "connected", connected);
     // Switched off is not the same as not connected, and the launcher draws
     // them differently.
-    LuaApi::setField(L, "enabled", Network::isEnabled());
-    LuaApi::setField(L, "portal", Network::isPortalActive());
+    LuaApi::setField(L, "enabled", NetworkService::isEnabled());
+    LuaApi::setField(L, "portal", NetworkService::isPortalActive());
 
     if (connected) {
         LuaApi::setField(L, "ssid", WiFi.SSID().c_str());
