@@ -43,19 +43,21 @@ local state = {
     refreshes = 0,
 }
 
--- Moves the selection, wrapping at both ends, and scrolls the window to keep
--- it visible. Returns true only when something changed, so the caller does not
--- pay 400ms for a refresh with nothing new to show.
+-- Moves the selection and scrolls the window to keep it visible. Returns true
+-- only when something changed, so the caller does not pay 400ms for a refresh
+-- with nothing new to show.
 local function moveBy(delta)
     if #state.apps == 0 then
         return false
     end
 
+    -- Clamped, not wrapped: reaching an end stops there. Wrapping made a long
+    -- list feel like it had lost your place.
     local target = state.selected + delta
     if target < 1 then
-        target = #state.apps
-    elseif target > #state.apps then
         target = 1
+    elseif target > #state.apps then
+        target = #state.apps
     end
 
     if target == state.selected then
