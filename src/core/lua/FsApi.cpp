@@ -21,7 +21,7 @@ bool hasTraversal(const String& path) { return path.indexOf("..") >= 0; }
 // which is how an app reads its assets without knowing where it was installed.
 // Returns an empty string when that cannot be done -- the caller turns it into
 // a Lua error naming the reason.
-String resolve(const String& path, const char** reason) {
+String resolveInternal(const String& path, const char** reason) {
     if (hasTraversal(path)) {
         *reason = "'..' is not allowed";
         return "";
@@ -50,7 +50,7 @@ bool writeAllowed(const String& absolute) {
 
 int list(lua_State* L) {
     const char* reason = "";
-    const String path = resolve(luaL_checkstring(L, 1), &reason);
+    const String path = resolveInternal(luaL_checkstring(L, 1), &reason);
     if (path.isEmpty()) {
         return luaL_error(L, "fs.list denied: %s", reason);
     }
@@ -100,7 +100,7 @@ int list(lua_State* L) {
 
 int read(lua_State* L) {
     const char* reason = "";
-    const String path = resolve(luaL_checkstring(L, 1), &reason);
+    const String path = resolveInternal(luaL_checkstring(L, 1), &reason);
     if (path.isEmpty()) {
         return luaL_error(L, "fs.read denied: %s", reason);
     }
@@ -132,7 +132,7 @@ int read(lua_State* L) {
 
 int exists(lua_State* L) {
     const char* reason = "";
-    const String path = resolve(luaL_checkstring(L, 1), &reason);
+    const String path = resolveInternal(luaL_checkstring(L, 1), &reason);
     if (path.isEmpty()) {
         lua_pushboolean(L, false);
         return 1;
@@ -146,7 +146,7 @@ int exists(lua_State* L) {
 
 int write(lua_State* L) {
     const char* reason = "";
-    const String path = resolve(luaL_checkstring(L, 1), &reason);
+    const String path = resolveInternal(luaL_checkstring(L, 1), &reason);
     if (path.isEmpty()) {
         return luaL_error(L, "fs.write denied: %s", reason);
     }
@@ -182,6 +182,10 @@ const luaL_Reg kFunctions[] = {
 };
 
 }  // namespace
+
+String resolvePath(const String& path, const char** reason) {
+    return resolveInternal(path, reason);
+}
 
 void install(lua_State* L) { LuaApi::installTable(L, "fs", kFunctions); }
 

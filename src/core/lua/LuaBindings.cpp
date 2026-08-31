@@ -5,6 +5,7 @@
 #include "core/lua/DisplayApi.h"
 #include "core/lua/FsApi.h"
 #include "core/lua/InputApi.h"
+#include "core/lua/SettingsApi.h"
 #include "core/lua/SysApi.h"
 
 namespace LuaBindings {
@@ -19,6 +20,7 @@ void install(LuaWrapper& wrapper) {
     InputApi::install(L);
     FsApi::install(L);
     SysApi::install(L);
+    SettingsApi::install(L);
 }
 
 }  // namespace LuaBindings

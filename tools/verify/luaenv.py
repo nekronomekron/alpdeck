@@ -45,7 +45,10 @@ BASE_NAMES = (
 )
 
 _BINDINGS_LUA = """
-local host = ...
+-- `env` is the sandbox table the script will run in. sys.import needs it: a
+-- module must be loaded into the SAME restricted environment as its caller,
+-- not into lupa's full-stdlib globals.
+local host, env = ...
 
 local display = {}
 function display.begin(mode, x, y, w, h)
@@ -93,8 +96,37 @@ function sys.temperature() return host.sys_temperature() end
 function sys.info() return host.sys_info() end
 function sys.wifi() return host.sys_wifi() end
 function sys.appdir() return host.sys_appdir() end
+function sys.wifi_scan() return host.sys_wifi_scan() end
+function sys.wifi_configure(ssid, pass) host.sys_wifi_configure(ssid, pass or "") end
+function sys.wifi_forget() host.sys_wifi_forget() end
+function sys.wifi_portal() host.sys_wifi_portal() end
+function sys.ftp_configure(user, pass) host.sys_ftp_configure(user, pass) end
 
-return display, input, fs, sys
+local modules = {}
+function sys.import(path)
+    local resolved = host.sys_resolve(path)
+    if modules[resolved] ~= nil then
+        return modules[resolved]
+    end
+    local source = host.fs_read(resolved)
+    if not source then
+        error("sys.import('" .. path .. "'): not found", 2)
+    end
+    local chunk, err = load(source, "=" .. resolved, "t", env)
+    if not chunk then
+        error("sys.import('" .. path .. "'): " .. tostring(err), 2)
+    end
+    local value = chunk()
+    modules[resolved] = value
+    return value
+end
+
+local settings = {}
+function settings.get(name) return host.settings_get(name) end
+function settings.set(name, value) return host.settings_set(name, value) end
+function settings.keys() return host.settings_keys() end
+
+return display, input, fs, sys, settings
 """
 
 
@@ -113,6 +145,26 @@ def fonts():
             "pixel": load_gfx_font("Org_01"),
         }
     return _FONTS
+
+
+# Mirrors the schema declared in src/core/Settings.cpp. Kept in step by hand,
+# like everything else in the mock -- a divergence here would show up as a
+# launcher that renders a value the device would not.
+SETTINGS_SCHEMA = {
+    "wifi_enabled": {"type": "bool", "default": True},
+    "ftp_enabled": {"type": "bool", "default": True},
+    "standby_screen": {"type": "bool", "default": False},
+    "sleep_after_min": {"type": "int", "default": 0, "min": 0, "max": 240},
+    "refresh_every": {"type": "int", "default": 8, "min": 1, "max": 64},
+}
+
+DEFAULT_SCAN = [
+    {"ssid": "alpdeck-test", "rssi": -48, "open": False},
+    {"ssid": "Gaeststube", "rssi": -61, "open": False},
+    {"ssid": "FRITZ!Box 7590", "rssi": -70, "open": False},
+    {"ssid": "Freifunk", "rssi": -78, "open": True},
+    {"ssid": "hotel-guest", "rssi": -85, "open": True},
+]
 
 
 class VirtualFs:
@@ -181,7 +233,7 @@ class Host:
     """Python side of the bindings, mirroring LuaBindings.cpp semantics."""
 
     def __init__(self, panel=None, vfs=None, events=None, wifi=None,
-                 stop_when_drained=False):
+                 stop_when_drained=False, settings=None, scan_results=None):
         self.panel = panel or Panel()
         self.vfs = vfs or VirtualFs()
         self.events = list(events or [])
@@ -192,6 +244,12 @@ class Host:
         self.exited = False
         self.clock_ms = 0
         self.ink = BLACK
+        self.settings = dict(settings or {})
+        self.scan_results = list(scan_results if scan_results is not None
+                                 else DEFAULT_SCAN)
+        self.configured_wifi = None
+        self.configured_ftp = None
+        self.portal_active = False
         self.lua = None  # set by run_script, needed to build Lua tables
         self.wifi_status = wifi if wifi is not None else {"connected": False}
         self.snapshot = {
@@ -391,10 +449,70 @@ class Host:
         })
 
     def sys_wifi(self):
-        return self.lua.table_from(self.wifi_status)
+        status = dict(self.wifi_status)
+        status["enabled"] = self.settings_get("wifi_enabled")
+        status["portal"] = self.portal_active
+        return self.lua.table_from(status)
 
     def sys_appdir(self):
         return self.vfs.sandbox_root
+
+    def sys_resolve(self, path):
+        """Mirrors FsApi::resolvePath, which sys.import shares with fs.*."""
+        return self.vfs.resolve(path)
+
+    def sys_wifi_scan(self):
+        return self.lua.table_from(
+            [self.lua.table_from(network) for network in self.scan_results])
+
+    def sys_wifi_configure(self, ssid, password):
+        # Write-only on the device; here it is recorded so a test can assert
+        # what the flow submitted without the value ever being readable in Lua.
+        self.configured_wifi = (ssid, password)
+        self.wifi_status = {"connected": True, "ssid": ssid,
+                            "ip": "192.168.1.42", "rssi": -55}
+
+    def sys_wifi_forget(self):
+        self.configured_wifi = None
+        self.wifi_status = {"connected": False}
+
+    def sys_wifi_portal(self):
+        self.portal_active = True
+
+    def sys_ftp_configure(self, user, password):
+        self.configured_ftp = (user, password)
+
+    # ----------------------------------------------------------------- settings
+
+    def settings_get(self, name):
+        key = SETTINGS_SCHEMA.get(name)
+        if key is None:
+            raise ValueError("unknown setting '%s'" % name)
+        value = self.settings.get(name, key["default"])
+        return bool(value) if key["type"] == "bool" else int(value)
+
+    def settings_set(self, name, value):
+        key = SETTINGS_SCHEMA.get(name)
+        if key is None:
+            raise ValueError("unknown setting '%s'" % name)
+        if key["type"] == "bool":
+            self.settings[name] = bool(value)
+            return True
+        value = int(value)
+        if value < key["min"] or value > key["max"]:
+            return False
+        self.settings[name] = value
+        return True
+
+    def settings_keys(self):
+        rows = []
+        for name, key in SETTINGS_SCHEMA.items():
+            row = {"name": name, "type": key["type"]}
+            if key["type"] == "int":
+                row["min"] = key["min"]
+                row["max"] = key["max"]
+            rows.append(self.lua.table_from(row))
+        return self.lua.table_from(rows)
 
 
 def build_environment(lua, host):
@@ -409,11 +527,12 @@ def build_environment(lua, host):
     env["_G"] = env
 
     build = lua.eval("function(src) return assert(load(src, '=bindings', 't')) end")
-    display, input_table, fs_table, sys_table = build(_BINDINGS_LUA)(host)
+    display, input_table, fs_table, sys_table, settings_table = build(_BINDINGS_LUA)(host, env)
     env["display"] = display
     env["input"] = input_table
     env["fs"] = fs_table
     env["sys"] = sys_table
+    env["settings"] = settings_table
     return env
 
 

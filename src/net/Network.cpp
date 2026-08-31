@@ -4,6 +4,7 @@
 #include <WiFi.h>
 
 #include "config/AppConfig.h"
+#include "core/Settings.h"
 #include "net/CaptivePortal.h"
 #include "utils/JsonUtil.h"
 #include "utils/Logger.h"
@@ -20,6 +21,7 @@ constexpr const char* kKeyPass = "pass";
 enum class State { Idle, Connecting, Connected, Portal };
 
 State connectionState = State::Idle;
+bool radioEnabled = true;
 bool lastAttemptFailed = false;
 unsigned long connectStartedMs = 0;
 std::function<void()> connectedCallback;
@@ -120,9 +122,44 @@ String statusJson() {
     return out;
 }
 
+// Brings the radio up from whatever credentials are stored, or raises the
+// portal when there are none. Shared by init() and by switching WiFi back on.
+void connectOrOfferPortal() {
+    const Credentials creds = loadCredentials();
+    if (creds.valid()) {
+        LOGI(kLogTag, "Stored credentials found for '%s'", creds.ssid.c_str());
+        startConnect(creds.ssid, creds.password);
+    } else {
+        LOGI(kLogTag, "No stored credentials; starting setup portal");
+        startPortal();
+    }
+}
+
+// Everything the radio holds open, released in the order that leaves nothing
+// half-torn-down: portal, then listeners, then the radio itself.
+void powerDown() {
+    if (CaptivePortal::isActive()) {
+        CaptivePortal::stop();
+    }
+    setConnected(false);  // drives the disconnect callback, which stops FTP
+    WiFi.disconnect(true, false);
+    WiFi.mode(WIFI_OFF);
+    connectionState = State::Idle;
+    lastAttemptFailed = false;
+}
+
 }  // namespace
 
 void init() {
+    radioEnabled = Settings::getBool(Settings::kWifiEnabled);
+    if (!radioEnabled) {
+        // Nothing is brought up at all -- not the radio, not the portal. This
+        // is the setting's whole purpose, so it is checked before any of it.
+        LOGI(kLogTag, "WiFi is switched off in settings");
+        WiFi.mode(WIFI_OFF);
+        return;
+    }
+
 #ifdef WOKWI_SIMULATOR
     // The simulator only joins the open "Wokwi-GUEST" SSID and cannot drive a
     // captive portal, so the portal is skipped entirely there.
@@ -139,15 +176,48 @@ void init() {
     CaptivePortal::onSubmit(applyCredentials);
     CaptivePortal::onStatus(statusJson);
 
-    const Credentials creds = loadCredentials();
-    if (creds.valid()) {
-        LOGI(kLogTag, "Stored credentials found for '%s'", creds.ssid.c_str());
-        startConnect(creds.ssid, creds.password);
-    } else {
-        LOGI(kLogTag, "No stored credentials; starting setup portal");
-        startPortal();
-    }
+    connectOrOfferPortal();
 #endif
+}
+
+bool isEnabled() { return radioEnabled; }
+
+void setEnabled(bool enabled) {
+    if (enabled == radioEnabled) {
+        return;
+    }
+    radioEnabled = enabled;
+
+    if (!enabled) {
+        LOGI(kLogTag, "Switching WiFi off");
+        powerDown();
+        return;
+    }
+
+    LOGI(kLogTag, "Switching WiFi on");
+    WiFi.mode(WIFI_STA);
+    WiFi.persistent(false);
+    WiFi.setAutoReconnect(true);
+    connectOrOfferPortal();
+}
+
+void configure(const String& ssid, const String& password) {
+    if (!radioEnabled) {
+        // Storing credentials while the radio is off would leave them
+        // unapplied and the caller none the wiser, so switch it on.
+        setEnabled(true);
+        Settings::setBool(Settings::kWifiEnabled, true);
+    }
+    LOGI(kLogTag, "Credentials set for '%s'", ssid.c_str());
+    applyCredentials(ssid, password);
+}
+
+void startSetupPortal() {
+    if (!radioEnabled) {
+        setEnabled(true);
+        Settings::setBool(Settings::kWifiEnabled, true);
+    }
+    startPortal();
 }
 
 void loop() {

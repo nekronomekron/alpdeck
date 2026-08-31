@@ -3,8 +3,10 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include <SD.h>
+#include <string.h>
 
 #include "config/AppConfig.h"
+#include "core/Settings.h"
 #include "core/lua/LuaContext.h"
 #include "core/lua/LuaHost.h"
 #include "net/FtpService.h"
@@ -66,6 +68,32 @@ void startApp(const String& path) {
     }
 }
 
+// FTP only makes sense with a network under it, so its own setting and the
+// connection state are checked together. Called on a settings change and from
+// the connect callback, which is what keeps one rule in one place.
+void applyFtpSetting() {
+    const bool wanted = Settings::getBool(Settings::kFtpEnabled) &&
+                        Network::isConnected();
+    if (wanted) {
+        FtpService::start(sdMounted);
+    } else {
+        FtpService::stop();
+    }
+}
+
+// The kernel's half of the declarative settings contract: Lua writes a value,
+// this decides what it means for the hardware.
+void onSettingChanged(const char* key) {
+    if (strcmp(key, Settings::kWifiEnabled) == 0) {
+        Network::setEnabled(Settings::getBool(Settings::kWifiEnabled));
+        applyFtpSetting();
+    } else if (strcmp(key, Settings::kFtpEnabled) == 0) {
+        applyFtpSetting();
+    }
+    // The rest -- standby screen, sleep timeout, refresh interval -- are read
+    // where they are used, so they need no apply step.
+}
+
 // Fires on the main loop once a script's VM is fully torn down, so starting
 // the next one here can never leave two states alive.
 void onScriptFinished(const LuaHost::Finished& finished) {
@@ -84,10 +112,19 @@ void onScriptFinished(const LuaHost::Finished& finished) {
     }
 
     // The launcher itself returned without a launch request. Restarting it
-    // immediately would spin, so only report the outright failures.
+    // immediately would spin -- but leaving a dead panel with only a log line
+    // is close to a brick, so a launcher that failed outright says so on
+    // screen. Its own error text is the useful part: with the launcher split
+    // across /lib modules, a missing or broken one lands exactly here.
     if (finished.exit == LuaHost::Exit::Failed ||
         finished.exit == LuaHost::Exit::NotFound) {
-        LOGE(kLogTag, "Launcher stopped unexpectedly; not restarting");
+        LOGE(kLogTag, "Launcher stopped unexpectedly: %s",
+             finished.message.c_str());
+
+        String message = "launcher failed\n";
+        message += finished.message.isEmpty() ? "see the serial log"
+                                              : finished.message;
+        fail(message.c_str());
     }
 }
 
@@ -147,6 +184,8 @@ void mountFilesystems() {
 
 void run() {
     beginSerial();
+    Settings::begin();
+    Settings::onChanged(onSettingChanged);
 
     // Before anything else: a wake from a press too brief to count goes
     // straight back to sleep, and must do so without having touched any
@@ -175,7 +214,7 @@ void run() {
     // FTP only exists once there is a network to serve it on, so it is started
     // from the connect callback rather than here -- that covers both a
     // boot-time auto-connect and credentials arriving later via the portal.
-    Network::onConnected([]() { FtpService::start(sdMounted); });
+    Network::onConnected(applyFtpSetting);
     Network::onDisconnected(FtpService::stop);
     Network::init();
 
