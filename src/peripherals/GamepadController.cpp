@@ -122,3 +122,21 @@ void GamepadController::poll(uint32_t nowMs, SeesawButtons::PublishFn publish) {
     pollAxis(axisX_, publish);
     pollAxis(axisY_, publish);
 }
+
+void GamepadController::fill(Input::Snapshot& snapshot) const {
+    const State current = state();
+
+    snapshot.hasGamepad = available_;
+    snapshot.gamepadA = current.a;
+    snapshot.gamepadB = current.b;
+    snapshot.gamepadX = current.x;
+    snapshot.gamepadY = current.y;
+    snapshot.gamepadStart = current.start;
+    snapshot.gamepadSelect = current.select;
+    snapshot.gamepadAxisX = current.axisX;
+    snapshot.gamepadAxisY = current.axisY;
+    snapshot.gamepadDeflectionX = current.deflectionX;
+    snapshot.gamepadDeflectionY = current.deflectionY;
+    snapshot.gamepadStickX = current.stickX;
+    snapshot.gamepadStickY = current.stickY;
+}

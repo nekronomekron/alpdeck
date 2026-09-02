@@ -3,6 +3,7 @@
 #include <Wire.h>
 
 #include "config/AppConfig.h"
+#include "peripherals/Controller.h"
 #include "peripherals/GamepadController.h"
 #include "peripherals/InputDigest.h"
 #include "peripherals/RotaryController.h"
@@ -14,6 +15,12 @@ namespace {
 
 RotaryController rotary;
 GamepadController gamepad;
+
+// Every controller the device knows how to talk to. init() probes each and
+// poll() reads each that answered, so neither has a branch per device and a
+// third one is an entry here plus its own class.
+Controller* const kControllers[] = {&rotary, &gamepad};
+
 QueueHandle_t events = nullptr;
 
 constexpr uint8_t kQueueLength = 16;
@@ -70,10 +77,12 @@ bool init() {
     lastActivityMs = millis();
     Wire.begin(Config::I2C_PIN_SDA, Config::I2C_PIN_SCL, Config::I2C_FREQUENCY);
 
-    // Both controllers are optional and share the daisy-chained bus; probe
-    // each independently. The device is only unusable with neither present.
-    rotary.begin();
-    gamepad.begin();
+    // Every controller is optional and they share the daisy-chained bus; probe
+    // each independently. The device is only unusable with none present.
+    // Each logs what it found, or did not, at its own address.
+    for (Controller* controller : kControllers) {
+        controller->begin();
+    }
 
     if (!isAvailable()) {
         LOGE(kLogTag, "No input controller found (rotary 0x%02X, gamepad 0x%02X)",
@@ -83,7 +92,14 @@ bool init() {
     return true;
 }
 
-bool isAvailable() { return hasRotary() || hasGamepad(); }
+bool isAvailable() {
+    for (const Controller* controller : kControllers) {
+        if (controller->available()) {
+            return true;
+        }
+    }
+    return false;
+}
 
 bool hasRotary() { return rotary.available(); }
 
@@ -91,36 +107,16 @@ bool hasGamepad() { return gamepad.available(); }
 
 void poll() {
     const uint32_t nowMs = millis();
-    rotary.poll(nowMs, publish);
-    gamepad.poll(nowMs, publish);
-
-    // Rebuild the level-triggered mirror from what the drivers just sampled.
-    const RotaryController::State rotaryState = rotary.state();
-    const GamepadController::State gamepadState = gamepad.state();
-
     Snapshot fresh;
-    fresh.hasRotary = rotary.available();
-    fresh.hasGamepad = gamepad.available();
 
-    fresh.rotarySelect = rotaryState.select;
-    fresh.rotaryUp = rotaryState.up;
-    fresh.rotaryLeft = rotaryState.left;
-    fresh.rotaryDown = rotaryState.down;
-    fresh.rotaryRight = rotaryState.right;
-    fresh.rotaryEncoder = rotaryState.encoder;
+    for (Controller* controller : kControllers) {
+        controller->poll(nowMs, publish);
 
-    fresh.gamepadA = gamepadState.a;
-    fresh.gamepadB = gamepadState.b;
-    fresh.gamepadX = gamepadState.x;
-    fresh.gamepadY = gamepadState.y;
-    fresh.gamepadStart = gamepadState.start;
-    fresh.gamepadSelect = gamepadState.select;
-    fresh.gamepadAxisX = gamepadState.axisX;
-    fresh.gamepadAxisY = gamepadState.axisY;
-    fresh.gamepadDeflectionX = gamepadState.deflectionX;
-    fresh.gamepadDeflectionY = gamepadState.deflectionY;
-    fresh.gamepadStickX = gamepadState.stickX;
-    fresh.gamepadStickY = gamepadState.stickY;
+        // Rebuild the level-triggered mirror from what the driver just sampled.
+        // Each fills only its own fields, so this stays one struct without the
+        // controllers knowing about each other.
+        controller->fill(fresh);
+    }
 
     portENTER_CRITICAL(&latestMux);
     latest = fresh;

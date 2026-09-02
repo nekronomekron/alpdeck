@@ -86,3 +86,15 @@ void RotaryController::poll(uint32_t nowMs, SeesawButtons::PublishFn publish) {
 
     buttons_.poll(nowMs, publish);
 }
+
+void RotaryController::fill(Input::Snapshot& snapshot) const {
+    const State current = state();
+
+    snapshot.hasRotary = available_;
+    snapshot.rotarySelect = current.select;
+    snapshot.rotaryUp = current.up;
+    snapshot.rotaryLeft = current.left;
+    snapshot.rotaryDown = current.down;
+    snapshot.rotaryRight = current.right;
+    snapshot.rotaryEncoder = current.encoder;
+}
