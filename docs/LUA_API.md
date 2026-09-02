@@ -401,6 +401,39 @@ input → state → render loop the launcher's every list uses — it owns the
 refresh strategy, so a screen describes what it should look like and never
 decides when to draw.
 
+#### Looking like the rest of the device
+
+An app on the card imports these **by absolute path**, because they live on
+flash and a relative path resolves inside the app's own folder. The three
+shipped apps all do it, and they are the worked examples:
+
+```lua
+local ui = sys.import("/lib/ui.lua")
+local screen = sys.import("/lib/screen.lua")
+
+ui.header("my app", W, wifi.status())     -- title, rule, signal icon
+ui.footer("long-press select / B to exit", W, H)
+if screen.BACK[event] then return end
+```
+
+`ui.header`'s third argument is optional and is what makes an app's chrome
+match the launcher's: the same rule at the same height, with the signal icon
+where it always is. Content starts at `ui.HEADER_H`.
+
+**An icon you draw once is an icon that lies.** An app can hold the panel for
+as long as someone keeps using it, so compare `ui.wifiBars(wifi.status())` with
+the count you last drew and call `screen.refreshHeader(title, width, status)`
+when it differs — a 42px band rather than the whole panel. Compare the bar
+count and never the raw rssi, which drifts by a dBm between reads and would buy
+a refresh every half minute to draw an identical icon.
+
+Taking the chrome does not mean taking `screen.run`. `hello` reads raw events
+because it echoes every one of them, `controllers` polls `input.state()`
+because a released button produces no event to wake on, and `bench` opens its
+own frames because a timing run routed through the shared loop would be
+measuring the loop. Use the widgets and the vocabulary; use the loop when it
+fits.
+
 ---
 
 ## wifi and ftp

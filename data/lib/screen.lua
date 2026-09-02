@@ -43,6 +43,26 @@ function screen.steps(nav)
     return nav.dy + nav.wheel
 end
 
+------------------------------------------------------------------- chrome --
+
+-- Repaints just the header, for an app whose wifi icon would otherwise sit
+-- frozen at whatever it was when the screen was first drawn.
+--
+-- A 42px band costs about 431ms against the 609ms of a whole panel -- not the
+-- saving the small window suggests, because the fixed cost dominates, but it is
+-- also the only thing on the panel that changed. Call it when ui.wifiBars()
+-- differs from the count you last drew, and never on the raw rssi: that drifts
+-- by a dBm between reads and would buy a refresh every half minute to draw an
+-- identical icon.
+--
+-- Lives here rather than in ui.lua because it opens and shows a frame of its
+-- own, and ui.lua only ever draws into a frame somebody else owns.
+function screen.refreshHeader(title, width, status)
+    display.begin("partial", 0, 0, width, ui.HEADER_H)
+    ui.header(title, width, status)
+    display.show()
+end
+
 --------------------------------------------------------------------- loop --
 
 -- Input -> state -> render, decoupled. Every list screen in the launcher runs

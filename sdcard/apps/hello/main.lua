@@ -10,8 +10,19 @@
 --   * region refresh -- redrawing only the play area when the sprite moves,
 --     instead of paying for the whole 400x300 panel every frame
 --   * the font and ink settings
+--   * the shared UI libraries, so an app looks like the rest of the device
+--     without redrawing the launcher's chrome by hand
+--
+-- The libraries live on flash and the app on the card, which is why they are
+-- imported by absolute path: a relative one would resolve inside this app's
+-- own folder.
+
+local ui = sys.import("/lib/ui.lua")
+local screen = sys.import("/lib/screen.lua")
 
 local W, H = display.size()
+
+local TITLE = "hello"
 
 local SPRITE_W, SPRITE_H = 16, 16
 -- Relative, so the app never needs to know where it was installed. Generated
@@ -28,6 +39,10 @@ local sprite = {
 }
 local steps = 0
 local lastEvent = "(none yet)"
+
+-- The bar count last drawn in the header, so the icon can be kept honest
+-- without redrawing anything for an rssi that wandered by a dBm.
+local shownBars = nil
 
 local STEP = 8
 
@@ -57,11 +72,14 @@ end
 local function drawAll(full)
     display.begin(full and "full" or "partial")
 
-    display.font("bold")
-    display.text(12, 10, "hello", 2)
-
+    -- ui.header draws in whatever face is current, and this app changes it, so
+    -- put it back before every frame rather than hoping.
     display.font("default")
-    display.text(12, 44, "move with the stick or the dial", 1)
+    local radio = wifi.status()
+    shownBars = ui.wifiBars(radio)
+    ui.header(TITLE, W, radio)
+
+    display.text(ui.MARGIN, ui.HEADER_H + 10, "move with the stick or the dial", 1)
 
     drawPlayArea()
 
@@ -74,10 +92,11 @@ local function drawAll(full)
     -- and the power-down, and a two-value call in the last argument slot would
     -- quietly hand format() an argument it does not have a slot for.
     local refreshMs = display.timing()
-    display.text(12, H - 30, string.format("lua %d B   heap %d B   last refresh %d ms",
-        luaBytes, freeHeap, refreshMs), 1)
+    display.text(ui.MARGIN, H - 34,
+        string.format("lua %d B   heap %d B   last refresh %d ms",
+            luaBytes, freeHeap, refreshMs), 1)
 
-    display.text(12, H - 14, "long-press select / B to exit", 1)
+    ui.footer("long-press select / B to exit", W, H)
 
     display.show()
 end
@@ -117,8 +136,6 @@ local MOVES = {
     gamepad_up = { 0, -1 }, gamepad_down = { 0, 1 },
     gamepad_left = { -1, 0 }, gamepad_right = { 1, 0 },
 }
-local EXIT = { rotary_select_long = true, gamepad_b = true }
-
 drawAll(true)
 
 while true do
@@ -126,9 +143,18 @@ while true do
 
     if event then
         lastEvent = event
+    else
+        -- Nothing for thirty seconds. Look at the radio rather than the panel:
+        -- the icon is the one thing up there that changes on its own, and a
+        -- header-only frame is the cheapest way to say so.
+        local radio = wifi.status()
+        if ui.wifiBars(radio) ~= shownBars then
+            shownBars = ui.wifiBars(radio)
+            screen.refreshHeader(TITLE, W, radio)
+        end
     end
 
-    if EXIT[event] then
+    if screen.BACK[event] then
         return  -- the host restarts the launcher for us
     elseif MOVES[event] then
         local delta = MOVES[event]

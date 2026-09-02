@@ -32,7 +32,18 @@
 -- its own microsecond timings per phase (_PowerOn, _Update_Part, _Update_Full,
 -- _PowerOff) as it goes. Those are the ground truth this app adds up.
 
+-- Imported by absolute path: the libraries are on flash, this app is on the
+-- card, and a relative path would resolve inside the app's own folder.
+--
+-- Only the chrome comes from them. The measured frames are opened and shown by
+-- hand, deliberately -- a timing run that went through the shared refresh loop
+-- would be measuring the library.
+local ui = sys.import("/lib/ui.lua")
+local screen = sys.import("/lib/screen.lua")
+
 local W, H = display.size()
+
+local TITLE = "display timing"
 
 -- Three timed passes per mode and regime, plus one thrown away. The first frame
 -- after a reset is forced full by the controller no matter what was asked for,
@@ -41,13 +52,6 @@ local WARMUP = 1
 local REPEATS = 3
 
 local POLL_MS = 40
-
--- Older firmware returned one value from display.timing() and had no way to put
--- the panel down on demand. Reporting either as zero would look like a
--- measurement rather than a missing binding.
-local _, probe = display.timing()
-local HAS_POWER = probe ~= nil
-local HAS_SLEEP = type(display.power_down) == "function"
 
 -- What gets drawn into every timed frame. Ink matters: an e-paper refresh
 -- moves particles, and a blank frame is not what a real screen costs.
@@ -107,31 +111,28 @@ end
 
 local function measure(label, mode, x, y, w, h)
     local warm = timeFrames(mode, x, y, w, h, false)
-    local cold = HAS_SLEEP and timeFrames(mode, x, y, w, h, true) or nil
+    local cold = timeFrames(mode, x, y, w, h, true)
 
     local row = {
         label = label,
         draw = warm.draw,
         warm = warm.refresh,
-        cold = cold and cold.refresh or nil,
-        wake = cold and (cold.refresh - warm.refresh) or nil,
+        cold = cold.refresh,
+        wake = cold.refresh - warm.refresh,
         power = warm.power,
         total = warm.total,
     }
 
     sys.log(string.format(
         "bench  %-14s draw %4d  warm %4d  cold %4d  wake %4d  power %4d  total %4d",
-        row.label, row.draw, row.warm, row.cold or 0, row.wake or 0,
-        row.power, row.total))
+        row.label, row.draw, row.warm, row.cold, row.wake, row.power,
+        row.total))
     return row
 end
 
 ------------------------------------------------------------------- measure --
 
 sys.log("bench: measuring, " .. REPEATS .. " passes per mode and regime")
-if not HAS_SLEEP then
-    sys.log("bench: display.power_down() missing; warm figures only")
-end
 
 -- Ordered cheapest last, so the screen ends on the fast case and the eye has
 -- something to compare the slow one against.
@@ -156,47 +157,57 @@ local function line(y, cells, size)
     end
 end
 
-local function number(value)
-    return value and tostring(value) or "n/a"
-end
+local radio = wifi.status()
+local shownBars = ui.wifiBars(radio)
 
 display.begin("full")
 
-display.text(12, 8, "display timing", 2)
-display.text(12, 30, "milliseconds, mean of " .. REPEATS .. " passes", 1)
-display.rect(0, 44, W, 2, true)
+ui.header(TITLE, W, radio)
+display.text(ui.MARGIN, ui.HEADER_H + 6,
+    "milliseconds, mean of " .. REPEATS .. " passes", 1)
 
-line(54, { "mode", "draw", "warm", "cold", "wake", "power" })
-display.rect(12, 66, W - 24, 1, true)
+local TABLE_TOP = 66
+
+line(TABLE_TOP, { "mode", "draw", "warm", "cold", "wake", "power" })
+display.rect(ui.MARGIN, TABLE_TOP + 12, W - 2 * ui.MARGIN, 1, true)
 
 for index, row in ipairs(rows) do
-    local y = 74 + (index - 1) * 16
+    local y = TABLE_TOP + 20 + (index - 1) * 16
     line(y, {
         row.label,
         tostring(row.draw),
         tostring(row.warm),
-        number(row.cold),
-        number(row.wake),
-        HAS_POWER and tostring(row.power) or "n/a",
+        tostring(row.cold),
+        tostring(row.wake),
+        tostring(row.power),
     })
 end
 
-local footer = 74 + #rows * 16 + 8
-display.rect(12, footer, W - 24, 1, true)
-display.text(12, footer + 8,
+local footer = TABLE_TOP + 20 + #rows * 16 + 8
+display.rect(ui.MARGIN, footer, W - 2 * ui.MARGIN, 1, true)
+display.text(ui.MARGIN, footer + 8,
     "warm: panel still powered. cold: hibernated first.", 1)
-display.text(12, footer + 20,
+display.text(ui.MARGIN, footer + 20,
     "wake is what one hibernate round trip costs the next frame.", 1)
-display.text(12, footer + 32,
+display.text(ui.MARGIN, footer + 32,
     "power 0 on warm means the hibernate is off the critical path.", 1)
 
-display.text(12, H - 14, "press anything to go back", 1)
+ui.footer("press anything to go back", W, H)
 display.show()
 
 while true do
     local event = input.read(0)
     if event then
         return
+    end
+
+    -- The results are a report and never change, so the icon is the only thing
+    -- on this panel that can go stale. A header-only frame is what that is
+    -- worth; redrawing the table to move four bars would not be.
+    radio = wifi.status()
+    if ui.wifiBars(radio) ~= shownBars then
+        shownBars = ui.wifiBars(radio)
+        screen.refreshHeader(TITLE, W, radio)
     end
 
     sys.delay(POLL_MS)

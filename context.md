@@ -236,6 +236,14 @@ only the ones that are attached) and `bench` (**Timing** — measures what a
 frame actually costs on this panel: draw, refresh, power-down and wall clock,
 per refresh mode).
 
+All three take their chrome from `/lib/ui.lua` and `/lib/screen.lua`, imported
+by **absolute** path because the libraries are on flash and the apps are on the
+card. None of them takes `screen.run`, and that is not an oversight: `hello`
+reads raw events because it echoes every one of them, `controllers` polls
+`input.state()` because a released button produces no event to wake on, and
+`bench` opens its own frames because a timing run routed through the shared
+loop would be measuring the loop.
+
 ## Drawing: input, state, render
 
 Screens do not draw in response to an event. `screen.run` in `lib/screen.lua`

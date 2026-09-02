@@ -101,12 +101,28 @@ function ui.navbar(opts)
     display.rect(0, ui.NAV_HEIGHT, width, 2, true)
 end
 
--- Header for a sub-screen: a title and the same rule, but no icons. Sub-screens
--- are modal, so there is nothing up there to reach.
-function ui.header(title, width)
+-- Header for a screen below the launcher: a title and the same rule.
+--
+-- No menu icon, because there is no menu to reach from here, and no version,
+-- because that belongs to the firmware rather than to whatever this screen is.
+--
+-- `wifi` is optional and is what an app passes: the launcher's sub-screens are
+-- modal and short-lived, but an app can hold the panel for as long as someone
+-- keeps using it, and a device with no visible radio state for all that time is
+-- one you have to leave to find out. Pass the table from wifi.status().
+--
+-- An app that draws the icon has to keep it honest -- see screen.refreshHeader.
+function ui.header(title, width, wifi)
     display.text(ui.MARGIN, 12, title, 2)
+    if wifi then
+        ui.wifiIcon(width - ui.MARGIN - 18, 28, wifi)
+    end
     display.rect(0, ui.NAV_HEIGHT, width, 2, true)
 end
+
+-- The band the header occupies, rule included. What a header-only refresh
+-- covers, and where a screen's own content has to start.
+ui.HEADER_H = ui.NAV_HEIGHT + 2
 
 -- A hint line along the bottom, above a thin rule.
 function ui.footer(text, width, height)

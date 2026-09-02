@@ -11,31 +11,25 @@
 -- Events are still drained each pass, both to keep the queue from filling and
 -- to catch the rotary long-press.
 
+-- Imported by absolute path: the libraries are on flash and this app is on the
+-- card, so a relative path would resolve inside the app's own folder.
+local ui = sys.import("/lib/ui.lua")
+local screen = sys.import("/lib/screen.lua")
+
 local W, H = display.size()
 
--- The bindings this app needs postdate the first firmware that shipped apps.
--- Saying so beats drawing a screen where nothing ever lights up.
-if type(input.state) ~= "function" or type(display.circle) ~= "function" then
-    display.begin("full")
-    display.text(12, 30, "firmware too old", 2)
-    display.text(12, 66, "this app needs input.state() and", 1)
-    display.text(12, 80, "display.circle(), added with the", 1)
-    display.text(12, 94, "controller schematic.", 1)
-    display.text(12, 122, "flash the current firmware, then", 1)
-    display.text(12, 136, "copy sdcard/ to the card again.", 1)
-    display.text(12, 164, "press anything to go back", 1)
-    display.show()
-    input.read(30000)
-    return
-end
+local TITLE = "controller test"
 
 -- ----------------------------------------------------------------- geometry
 
-local HEADER_RULE_Y = 30
-local PANEL_Y, PANEL_H = 34, 244
-local BOARD_Y, BOARD_H = 52, 200
-local READOUT_Y = 256
-local FOOTER_RULE_Y = 282
+-- The schematic sits between the shared header and the shared footer, and
+-- there is no slack in it: the gamepad's keycap cluster reaches within a few
+-- pixels of the board outline at the bottom and the stick arrows do the same at
+-- the top. Moving the header rule down to where the launcher keeps it cost this
+-- app six pixels, which came out of the gap above the board.
+local PANEL_Y, PANEL_H = ui.HEADER_H + 2, 234
+local BOARD_Y, BOARD_H = 58, 198
+local READOUT_Y = 258
 
 local FULL_REFRESH_EVERY = 12  -- partial refreshes leave ghosting behind
 local POLL_MS = 40
@@ -138,7 +132,7 @@ local function drawGamepad(px, pw, gamepad)
 
     -- Stick: travel ring, the four digitised directions around it, and a dot at
     -- the live position, so a miscalibrated centre or a swapped axis shows.
-    local stickY, ring = 96, 26
+    local stickY, ring = 100, 26
     display.circle(cx, stickY, ring)
 
     for _, a in ipairs(STICK_ARROWS) do
@@ -152,11 +146,11 @@ local function drawGamepad(px, pw, gamepad)
 
     -- Side by side on the board, so stacked once it is turned: select above
     -- start, matching what you see with the board mounted.
-    pill(cx - 27, 142, 54, 15, "SELECT", gamepad.select)
-    pill(cx - 27, 160, 54, 15, "START", gamepad.start)
+    pill(cx - 27, 146, 54, 15, "SELECT", gamepad.select)
+    pill(cx - 27, 164, 54, 15, "START", gamepad.start)
 
     for _, b in ipairs(FACE_BUTTONS) do
-        keycap(cx + b.dx * 24, 214 + b.dy * 24, 11, b.label, gamepad[b.field])
+        keycap(cx + b.dx * 24, 218 + b.dy * 24, 11, b.label, gamepad[b.field])
     end
 
     -- Raw ADC, for checking GAMEPAD_STICK_CENTER and the invert flags.
@@ -176,7 +170,7 @@ local function drawRotary(px, pw, rotary, spin)
 
     -- The dial has no pressed state to show, so its feedback is a marker that
     -- steps around the rim: one detent, one tick.
-    local wheelY, wheelR, TICKS = 152, 72, 16
+    local wheelY, wheelR, TICKS = 156, 72, 16
     display.circle(cx, wheelY, wheelR)
 
     local marker = rotary.encoder % TICKS
@@ -215,8 +209,7 @@ local function draw(state, spin)
     refreshes = refreshes + 1
     display.begin(refreshes % FULL_REFRESH_EVERY == 1 and "full" or "partial")
 
-    display.text(12, 8, "controller test", 2)
-    display.rect(0, HEADER_RULE_Y, W, 2, true)
+    ui.header(TITLE, W, wifi.status())
 
     -- Only what actually answered on the bus gets drawn; a single controller
     -- gets a centred panel instead of an empty half screen.
@@ -243,9 +236,7 @@ local function draw(state, spin)
         end
     end
 
-    display.rect(0, FOOTER_RULE_Y, W, 1, true)
-    display.text(12, FOOTER_RULE_Y + 5,
-        "hold START 1.5s or long-press SELECT to exit", 1)
+    ui.footer("hold START 1.5s or long-press SELECT to exit", W, H)
 
     display.show()
 end
@@ -256,6 +247,9 @@ end
 local function signature(state, spin)
     local g, r = state.gamepad, state.rotary
     return table.concat({
+        -- The bar count, never the raw rssi: that wanders by a dBm between
+        -- reads and would buy a 609ms frame to redraw an identical icon.
+        ui.wifiBars(wifi.status()),
         tostring(r.present), tostring(r.select), tostring(r.up),
         tostring(r.left), tostring(r.down), tostring(r.right),
         tostring(r.encoder), spin,
@@ -279,7 +273,7 @@ while true do
     -- rotary long-press exists only as an event.
     local event = input.read(0)
     while event do
-        if event == "rotary_select_long" then
+        if screen.BACK[event] then
             return
         end
         event = input.read(0)
