@@ -204,6 +204,25 @@ function ui.firstSelectable(items)
     return ui.nextSelectable(items, 1, 1)
 end
 
+-- Moves the scroll window the least it has to for `index` to be inside it, and
+-- returns the new top. The least, because a window that jumps further than it
+-- needs to loses the rows the user was reading around their selection.
+--
+-- nil, or an index above the list, leaves the window alone: not everything that
+-- can hold the cursor is a row, and the launcher's menu icon is not one.
+function ui.scrollTo(top, index, visible)
+    if index == nil or index < 1 then
+        return top
+    end
+    if index < top then
+        return index
+    end
+    if index >= top + visible then
+        return index - visible + 1
+    end
+    return top
+end
+
 -- Right-aligned label on a row, for a version or a setting's value.
 function ui.rowValue(text, y, width)
     if text == nil or text == "" then

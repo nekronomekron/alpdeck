@@ -22,6 +22,10 @@ HELLO_APP = os.path.join(PROJECT_ROOT, "sdcard", "apps", "hello", "main.lua")
 CONTROLLERS_APP = os.path.join(PROJECT_ROOT, "sdcard", "apps", "controllers", "main.lua")
 BENCH_APP = os.path.join(PROJECT_ROOT, "sdcard", "apps", "bench", "main.lua")
 
+# Not a shipped script: a fixture that reaches a state the launcher guards
+# against before it ever gets there. See the file for why it is worth a golden.
+FIXTURES = os.path.join(PROJECT_ROOT, "tools", "verify", "fixtures")
+
 WIFI_OFFLINE = {"connected": False}
 WIFI_ONLINE = {"connected": True, "ssid": "alpdeck-test", "ip": "192.168.1.42", "rssi": -55}
 
@@ -167,6 +171,13 @@ def scenarios():
         # column that has run off the panel edge is exactly the kind of thing
         # only a picture shows.
         yield ("app-bench",) + _run(BENCH_APP, [], app_root="/sd/apps/bench")
+
+        # Menus with nothing selectable in them. Reachable only by asking for
+        # them directly, and worth a golden anyway: both used to be a crash, and
+        # the empty state of a shared widget is the one nobody looks at.
+        yield ("menu-empty",) + _run(os.path.join(FIXTURES, "menu-empty.lua"), [])
+        yield ("menu-headers-only",) + _run(
+            os.path.join(FIXTURES, "menu-headers-only.lua"), [])
     finally:
         for path in temporaries:
             shutil.rmtree(path, ignore_errors=True)

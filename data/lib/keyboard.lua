@@ -393,7 +393,7 @@ function keyboard.prompt(opts)
     input.flush()
 
     while true do
-        local nav = input.take(120000)
+        local nav = input.take(screen.IDLE_MS)
 
         if nav == nil then
             -- Nothing typed for two minutes. Treat it as walking away rather

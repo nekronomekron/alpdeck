@@ -27,6 +27,15 @@ screen.RIGHT = { rotary_right = true, gamepad_right = true }
 screen.CONFIRM = { rotary_select = true, gamepad_a = true, gamepad_start = true }
 screen.BACK = { rotary_select_long = true, gamepad_b = true }
 
+-- How long a screen waits before deciding the user has walked away. Two
+-- minutes untouched is not someone reading: e-paper holds its image with no
+-- power, so a settings screen or a password field left standing is how a device
+-- gets found in a state nobody meant to leave it in.
+--
+-- One number, because it is one policy. A screen that should stay up for its
+-- own reasons passes its own idleMs.
+screen.IDLE_MS = 120000
+
 -- A digest read as lines of a list: the dial and the d-pad mean the same thing
 -- here. A screen that walks a grid uses nav.dy and nav.wheel separately, which
 -- is the only reason they arrive apart.
