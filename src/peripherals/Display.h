@@ -52,24 +52,11 @@ void beginFrame(int16_t x, int16_t y, int16_t w, int16_t h);
 void endFrame();
 bool frameOpen();
 
-// Hibernates the panel once it has been left alone for a moment. Call from
-// loop(); does nothing while a frame is open or the panel is already down.
+// Hibernates the panel once it has been left alone for a moment. Call from the
+// main loop; does nothing while a frame is open or the panel is already down.
 //
-// This exists because hibernating after every frame cost 143ms of every frame,
-// measured: 102ms for the power-down itself, and 41ms more on the NEXT frame
-// for the hardware reset and re-init that waking from hibernation forces. That
-// is a fifth of a 750ms frame spent switching a panel off and on again between
-// two frames a third of a second apart. Deferring it takes that out of the loop
-// for a user who is actually doing something, and still puts the panel down
-// promptly when they stop.
-//
-// The 41ms is why the delay below is not tuned to keep the panel warm: waking
-// is cheap, so the window is set by when the panel is genuinely idle rather
-// than by chasing the wake-up cost.
-//
-// Runs on the main loop while an app draws from the Lua task, which is why the
-// panel is behind a mutex. It never waits for it: a locked panel is one that is
-// mid-refresh, and there is nothing to power down.
+// The deadline, the lock and the measurements behind it are PanelPower's --
+// see that header for why the power-down is deferred at all.
 void loop();
 
 // How long the panel took to draw the last frame, in milliseconds. The refresh
@@ -77,13 +64,11 @@ void loop();
 // no asynchronous state to poll.
 uint32_t lastRefreshMs();
 
-// How long the last hibernate took, in milliseconds. Measured at 102ms and
-// constant: it is the power rail coming down, not the panel drawing.
-//
-// Since it became deferred this is no longer part of the frame a caller is
-// waiting on -- loop() pays it once the drawing has stopped. Reported anyway,
-// because it is still real time the device spends and the number is what makes
-// the deferral visible as having worked.
+// How long the last hibernate took, in milliseconds. Since the power-down became
+// deferred this is no longer part of the frame a caller is waiting on -- loop()
+// pays it once the drawing has stopped. Reported anyway, because it is what
+// makes the deferral visible as having worked: it reads 0 across a run of
+// frames, and 102ms once the panel actually goes down.
 uint32_t lastPowerDownMs();
 
 Adafruit_GFX& canvas();
