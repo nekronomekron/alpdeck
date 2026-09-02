@@ -9,8 +9,15 @@ namespace FtpService {
 
 constexpr const char* kLogTag = "FTP";
 
-void start(bool sdMounted);
+// Asks Vfs for the card rather than being told about it: one answer to "is
+// there an SD card", in the module that owns the mount.
+void start();
 void stop();
+
+// Rebuilds the server, but only if it is running, so its filesystem list
+// matches a card that has just been mounted or lost. Cheap: a new listening
+// socket, not a reconnect.
+void remount();
 
 // Replaces the stored login and restarts the server if it is running.
 // Write-only: nothing reads the password back out, for the same reason the

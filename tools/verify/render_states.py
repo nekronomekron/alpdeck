@@ -20,6 +20,7 @@ PROJECT_ROOT = luaenv.PROJECT_ROOT
 LAUNCHER = os.path.join(PROJECT_ROOT, "data", "launcher.lua")
 HELLO_APP = os.path.join(PROJECT_ROOT, "sdcard", "apps", "hello", "main.lua")
 CONTROLLERS_APP = os.path.join(PROJECT_ROOT, "sdcard", "apps", "controllers", "main.lua")
+BENCH_APP = os.path.join(PROJECT_ROOT, "sdcard", "apps", "bench", "main.lua")
 
 WIFI_OFFLINE = {"connected": False}
 WIFI_ONLINE = {"connected": True, "ssid": "alpdeck-test", "ip": "192.168.1.42", "rssi": -55}
@@ -113,6 +114,23 @@ def scenarios():
             LAUNCHER, to_menu + ["rotary_cw"] * 9 + ["rotary_select"],
             wifi=WIFI_ONLINE)
 
+        # A move that stays inside the scroll window: the cursor path, where
+        # only the two rows involved are refreshed. If ui.rowRect were off by a
+        # pixel the row left behind would still be highlighted here.
+        yield ("menu-options-cursor",) + _run(
+            LAUNCHER, to_menu + ["rotary_cw"] * 3, wifi=WIFI_ONLINE)
+
+        # The device group at the end of the list: the two rows that act on
+        # the device rather than on a setting.
+        yield ("menu-device-group",) + _run(
+            LAUNCHER, to_menu + ["rotary_cw"] * 11, wifi=WIFI_ONLINE)
+
+        # Re-reading the card. The mock's card is always there, so this is the
+        # success screen; the failure branch is device-only.
+        yield ("menu-sd-refresh",) + _run(
+            LAUNCHER, to_menu + ["rotary_cw"] * 10 + ["rotary_select"],
+            wifi=WIFI_ONLINE)
+
         # Row 2: wifi setup, which scans and lists what it found.
         yield ("menu-wifi-scan",) + _run(
             LAUNCHER, to_menu + ["rotary_cw", "rotary_select"], wifi=WIFI_ONLINE)
@@ -143,6 +161,12 @@ def scenarios():
             app_root="/sd/apps/hello")
         yield ("app-controllers",) + _run(CONTROLLERS_APP, [],
                                           app_root="/sd/apps/controllers")
+
+        # The timing bench. Its numbers are the mock's fiction -- there is no
+        # panel to wait for here -- but the results table has to lay out, and a
+        # column that has run off the panel edge is exactly the kind of thing
+        # only a picture shows.
+        yield ("app-bench",) + _run(BENCH_APP, [], app_root="/sd/apps/bench")
     finally:
         for path in temporaries:
             shutil.rmtree(path, ignore_errors=True)

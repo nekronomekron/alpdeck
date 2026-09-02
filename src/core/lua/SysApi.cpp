@@ -48,6 +48,38 @@ int launch(lua_State* L) {
     return 0;
 }
 
+// restart() -- reboots the device. Does not return.
+//
+// The panel is left holding whatever was last drawn, which on e-paper means it
+// stays readable through the reboot; the caller is expected to have put
+// something honest on it first, because a stale menu sitting there for the two
+// seconds of a boot looks like a device that has hung.
+int restart(lua_State* L) {
+    (void)L;
+    LOGI("Sys", "Restart requested by a script");
+    Serial.flush();
+    ESP.restart();
+    return 0;
+}
+
+// sd_remount() -> bool -- re-reads the SD card, and reports whether one is
+// there afterwards.
+//
+// For a card seated after boot, or swapped, or written to over a card reader.
+// Nothing else can pick that up: the mount happens once during boot, and every
+// /sd path resolves through it.
+int sdRemount(lua_State* L) {
+    const bool mounted = Vfs::mountSd();
+
+    // FTP built its filesystem list at start-up from the old answer, so it has
+    // to be told; without this a card mounted now stays invisible over the
+    // network until the next reboot.
+    FtpService::remount();
+
+    lua_pushboolean(L, mounted);
+    return 1;
+}
+
 int exit(lua_State* L) {
     LuaWrapper* self = *static_cast<LuaWrapper**>(lua_getextraspace(L));
     if (self != nullptr) {
@@ -342,6 +374,8 @@ const luaL_Reg kFunctions[] = {
     {"appdir", appdir},
     {"launch", launch},
     {"exit", exit},
+    {"restart", restart},
+    {"sd_remount", sdRemount},
     {"memory", memory},
     {"temperature", temperature},
     {"info", info},

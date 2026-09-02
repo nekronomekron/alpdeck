@@ -60,7 +60,8 @@ function display.begin(mode, x, y, w, h)
 end
 function display.show() host.display_show() end
 function display.size() return host.display_width(), host.display_height() end
-function display.timing() return host.display_timing() end
+function display.timing() return host.display_timing(), host.display_last_power_down() end
+function display.power_down() host.display_power_down() end
 function display.color(c) host.display_color(c) end
 function display.font(name) host.display_font(name or "default") end
 function display.clear() host.display_clear() end
@@ -76,6 +77,8 @@ function display.bitmap(x, y, w, h, data, bg) host.display_bitmap(x, y, w, h, da
 
 local input = {}
 function input.read(timeout) return host.input_read(timeout or 0) end
+function input.take(timeout) return host.input_take(timeout or 0) end
+function input.flush() host.input_flush() end
 function input.state() return host.input_state() end
 function input.controllers() return host.input_controllers() end
 
@@ -91,6 +94,8 @@ function sys.delay(ms) host.sys_delay(ms) end
 function sys.log(msg) host.sys_log(tostring(msg)) end
 function sys.launch(path) host.sys_launch(path) end
 function sys.exit() host.sys_exit() end
+function sys.restart() host.sys_restart() end
+function sys.sd_remount() return host.sys_sd_remount() end
 function sys.memory() return host.sys_lua_bytes(), host.sys_free_heap() end
 function sys.temperature() return host.sys_temperature() end
 function sys.info() return host.sys_info() end
@@ -242,6 +247,9 @@ class Host:
         self.log_lines = []
         self.launch_request = None
         self.exited = False
+        self.restarted = False
+        self.sd_remounts = 0
+        self.power_downs = 0
         self.clock_ms = 0
         self.ink = BLACK
         self.settings = dict(settings or {})
@@ -292,9 +300,23 @@ class Host:
         return self.panel.height
 
     def display_timing(self):
-        # The mock has no real panel to wait for; report the documented cost of
-        # the mode that was used, so pacing logic can at least be exercised.
-        return 1200 if self.panel.full_refreshes else 400
+        # The mock has no panel to wait for, so this is the measured cost model
+        # applied to the window that was actually refreshed. See Panel.
+        return self.panel.last_refresh_ms
+
+    def display_last_power_down(self):
+        # Zero, and correct rather than a stand-in: the device defers the
+        # hibernate to the main loop, so a run of frames reports no power-down
+        # there either.
+        return 0
+
+    def display_power_down(self):
+        # The panel model adds the measured wake cost to the next frame, so a
+        # cold frame reads higher here the way it does on the device. The
+        # power-down itself is not modelled: 102ms of main-loop time is real on
+        # hardware and means nothing in a harness with no clock to spend it on.
+        self.power_downs += 1
+        self.panel.hibernated = True
 
     def display_color(self, name):
         self.ink = WHITE if name == "white" else BLACK
@@ -383,6 +405,68 @@ class Host:
         # Empty queue with a timeout is the launcher's periodic redraw path.
         self.clock_ms += timeout_ms
         return None
+
+    # Mirrors Input::take, including the rule that an action closes the digest:
+    # navigation queued behind one is left for the next call. That is what keeps
+    # "turn, press, turn, press" two keystrokes here exactly as on the device --
+    # draining the whole scripted list into one digest would silently collapse
+    # every scenario that types more than one character.
+    NAV_STEPS = {
+        "rotary_up": (0, -1, 0), "gamepad_up": (0, -1, 0),
+        "rotary_down": (0, 1, 0), "gamepad_down": (0, 1, 0),
+        "rotary_left": (-1, 0, 0), "gamepad_left": (-1, 0, 0),
+        "rotary_right": (1, 0, 0), "gamepad_right": (1, 0, 0),
+        "rotary_cw": (0, 0, 1), "rotary_ccw": (0, 0, -1),
+    }
+
+    def input_take(self, timeout_ms):
+        dx = dy = wheel = 0
+        action = None
+
+        while self.events and action is None:
+            event = self.events.pop(0)
+            self.event_log.append(event)
+            step = self.NAV_STEPS.get(event)
+            if step is None:
+                action = event
+            else:
+                dx, dy, wheel = dx + step[0], dy + step[1], wheel + step[2]
+
+        if action is None and (dx, dy, wheel) == (0, 0, 0):
+            if self.stop_when_drained:
+                raise HarnessStop()
+            # An empty digest with a timeout is a screen coming round to look at
+            # its own state again -- the launcher's wifi indicator path.
+            self.clock_ms += max(0, int(timeout_ms))
+            return None
+
+        digest = {"dx": dx, "dy": dy, "wheel": wheel}
+        if action is not None:
+            digest["action"] = action
+        return self.lua.table_from(digest, recursive=True)
+
+    def input_flush(self):
+        # Deliberately does nothing. The harness feeds a script of what the user
+        # meant to do, not a hardware buffer, and dropping the rest of it here
+        # would stop every scenario at its first context switch.
+        #
+        # LIMIT: a flush this code forgot to make is therefore invisible here.
+        # Stale input arriving on a fresh screen is a device-only bug.
+        pass
+
+    def sys_restart(self):
+        # ESP.restart() never returns, so neither may this: letting the script
+        # carry on past a reboot would exercise a path the device cannot reach.
+        self.restarted = True
+        raise HarnessStop()
+
+    def sys_sd_remount(self):
+        # The virtual card is a directory that is always there. This can
+        # therefore only ever confirm that the call is wired up and that the
+        # screen around it renders -- an absent or unreadable card is a
+        # device-only state.
+        self.sd_remounts += 1
+        return True
 
     def input_state(self):
         return self.lua.table_from(self.snapshot, recursive=True)

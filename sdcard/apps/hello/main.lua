@@ -52,7 +52,7 @@ local function drawPlayArea()
             steps, sprite.x, sprite.y, lastEvent), 1)
 end
 
--- Whole panel: chrome plus the play area. Slow (~400ms partial, ~1200ms full),
+-- Whole panel: chrome plus the play area. Slow (609ms partial, 1989ms full),
 -- so it runs on entry and when something outside the play area changes.
 local function drawAll(full)
     display.begin(full and "full" or "partial")
@@ -69,8 +69,13 @@ local function drawAll(full)
     -- so nothing here may change between whole-panel frames.
     display.font("default")
     local luaBytes, freeHeap = sys.memory()
+
+    -- Bound to a local rather than called inline: timing() returns the refresh
+    -- and the power-down, and a two-value call in the last argument slot would
+    -- quietly hand format() an argument it does not have a slot for.
+    local refreshMs = display.timing()
     display.text(12, H - 30, string.format("lua %d B   heap %d B   last refresh %d ms",
-        luaBytes, freeHeap, display.timing()), 1)
+        luaBytes, freeHeap, refreshMs), 1)
 
     display.text(12, H - 14, "long-press select / B to exit", 1)
 

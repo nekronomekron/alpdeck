@@ -36,15 +36,44 @@ display.show()                          -- push it to the panel
 
 `begin()` opens a frame and fixes its refresh mode for the whole frame:
 
-| mode | cost | effect |
-| --- | --- | --- |
-| `"partial"` *(default)* | ~400 ms | fast, leaves faint ghosting behind |
-| `"full"` | ~1200 ms | slow, clears accumulated ghosting |
+| mode | warm | cold | effect |
+| --- | --- | --- | --- |
+| `"partial"` *(default)* | **609 ms** | 651 ms | fast, leaves faint ghosting behind |
+| `"full"` | **1989 ms** | 2032 ms | slow, clears accumulated ghosting |
+
+Measured on the device with the `Timing` app, whole panel, at room temperature.
+They are not the 400/1200 the GxEPD2 driver quotes — those are the fallbacks it
+uses on a panel with no BUSY line.
+
+*Warm* is a panel still powered from the previous frame, which is what a screen
+being used gets. *Cold* is the first frame after the panel has hibernated, and
+costs a flat **41 ms** more for the reset and re-init.
 
 Give `x, y, w, h` to bind the frame to a **region** (always a partial refresh
 — a full refresh drives the whole panel by nature). Drawing is clipped to it
-and `show()` pushes only that rectangle, which is markedly faster than a whole
-panel. Everything outside keeps whatever the panel was already displaying.
+and `show()` pushes only that rectangle. Everything outside keeps whatever the
+panel was already displaying.
+
+**A smaller region helps less than it looks.** Measured across window heights,
+a warm partial refresh costs
+
+```
+609 ms whole panel  =  402 ms fixed  +  0.70 ms per row
+```
+
+so two thirds of any frame is overhead a smaller window does not avoid. Useful
+sizes:
+
+| region | warm refresh |
+| --- | --- |
+| whole panel (300 rows) | 609 ms |
+| body of a list screen (240) | 570 ms |
+| two list rows (48) | ~435 ms |
+| one keyboard cell (28) | 413 ms |
+
+The lever that actually matters is **drawing fewer frames**, which is what
+`input.take()` is for. Shrinking the window is worth about 30%, not an order of
+magnitude.
 
 Two things follow from how e-paper works here, and both surprise people:
 
@@ -60,9 +89,32 @@ can just draw.
 
 ```lua
 display.size()        --> width, height
-display.timing()      --> milliseconds the last show() took
+display.timing()      --> refreshMs, powerDownMs of the last show()
 display.clear()       -- fill the drawable area with the current ink
 ```
+
+`timing()` splits the cost of a frame in two, because the halves have different
+cures. `refreshMs` is the panel: clocking the image out and waiting on BUSY.
+`powerDownMs` is the hibernate, measured at a constant **102 ms**. During a run
+of frames it reads 0, because no hibernate is happening between them.
+
+```lua
+display.power_down()   -- hibernate the panel now
+```
+
+The power-down is **deferred**: the firmware leaves the panel powered after a
+frame and hibernates it about two seconds after the drawing stops. It is
+therefore no longer part of what a script waits for — it used to be, and with
+the 41 ms reset and re-init it forced on the following frame it cost a measured
+143 ms of every 750 ms frame.
+
+That leaves a frame with two costs, and both are real: **warm** (the panel was
+still powered from the last frame) and **cold** (it had hibernated, so this
+frame pays a reset, a re-init and the charge pump coming up). The `Timing` app
+measures both, and `power_down()` is how it forces the cold case. Outside
+measurement there is one other use for it: an app that has drawn its last
+screen and would rather hand back with the panel already down. Calling it
+between ordinary frames just puts back the cost the deferral exists to avoid.
 
 ### Ink
 
@@ -156,14 +208,71 @@ Two controllers, both optional, at least one always present. Event names carry
 their source so a two-player app can tell them apart.
 
 ```lua
+input.take([timeoutMs])   --> digest, or nil on timeout   <-- use this
 input.read([timeoutMs])   --> event name, or nil on timeout
+input.flush()             -- drop everything buffered
 input.state()             --> what is held right now
 input.controllers()       --> { rotary = bool, gamepad = bool }
 ```
 
-`read()` is **edge-triggered**: it reports presses and never releases, so it
-cannot answer "is this button still down". `state()` is the level-triggered
-mirror for that.
+### take() — the one a screen should use
+
+```lua
+local nav = input.take(30000)
+if nav then
+    cursor = cursor + nav.dy + nav.wheel   -- one move, however far they turned
+    if nav.action == "rotary_select" then select(cursor) end
+end
+```
+
+```lua
+{ dx = 0, dy = 0, wheel = 0, action = nil }
+```
+
+`take()` hands back **everything that happened since the last call, coalesced**,
+and this is the difference between a screen that feels alive and one that does
+not. A refresh costs 609 ms; a user turning the dial through one puts eight
+events behind it, and replaying those one at a time costs five more seconds to
+arrive where the dial already was.
+
+The two classes of input are treated differently because they fail differently:
+
+- **Navigation** (`dx`, `dy`, `wheel`) is relative and adds up. Eight detents
+  is one move of eight, and nothing is lost by never drawing the seven cells in
+  between.
+- **`action`** is a commitment, so exactly one is held. A second press arriving
+  while one is still pending is **dropped**, not queued — otherwise hammering
+  a button through a slow refresh opens a menu and immediately acts inside it.
+
+Two rules follow from that, and both are load-bearing:
+
+- **Navigation arriving after an action is held back for the next digest.** An
+  action therefore always applies to the position the user was looking at when
+  they pressed it, never to one the same digest moved them to afterwards. Apply
+  navigation first, then the action; that is the order they happened in.
+- **`dy` and `wheel` arrive apart.** On a list they mean the same thing — add
+  them, or use `ui.steps(nav)`. On a grid they do not: the d-pad walks rows,
+  and the dial walks cells in reading order.
+
+`take()` consumes the `read()` queue too. They are two views of the same input,
+and a screen mixing them would see a press once or twice depending on timing.
+Pick one per app.
+
+### flush() — on every context switch
+
+Starting a screen, opening a menu, coming back from one. Whatever the user
+pressed at the previous screen was aimed at the previous screen, and letting it
+land on the new one moves a cursor nobody was watching. `ui.run` does this for
+you at both ends; a screen with a loop of its own has to do it itself.
+
+The host flushes on its own when an app starts and when the launcher comes
+back, so an app never inherits the presses that launched it.
+
+### read() — every edge, in order
+
+For games, and for anything that must not miss a single press. It is
+**edge-triggered**: it reports presses and never releases, so it cannot answer
+"is this button still down". `state()` is the level-triggered mirror for that.
 
 Events:
 
@@ -227,6 +336,25 @@ sys.info()          --> table, below
 sys.wifi()          --> { enabled, connected, portal [, ssid, ip, rssi] }
 sys.import(path)    --> a module (see below)
 ```
+
+Device-level actions. Both are what the launcher's **device** menu is built on,
+and an app may use them too:
+
+```lua
+sys.restart()       -- reboot; does not return
+sys.sd_remount()    --> true when a card is mounted afterwards
+```
+
+`restart()` never returns, so draw something first: e-paper holds its image
+with no power, and whatever is on the panel at the reset stays there for the
+whole boot. A menu left standing looks like a device that hung.
+
+`sd_remount()` releases the card and takes it again — the only way to pick up a
+card that was seated after boot, swapped, or written to elsewhere, because
+`/sd` is resolved through a mount made once during start-up. It also rebuilds
+the FTP server's filesystem list, so a card mounted now is reachable over the
+network without a reboot. **Finish reading the card before calling it**, and
+re-list anything you had cached from it afterwards.
 
 Network control, all write-only. Nothing reads a credential back into Lua:
 

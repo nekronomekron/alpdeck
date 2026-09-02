@@ -81,6 +81,12 @@ void applyCredentials(const String& ssid, const String& password) {
     startConnect(ssid, password);
 }
 
+// Announces a transition. Edge-triggered: calling it twice with the same value
+// fires nothing, which is what lets loop() call it on every pass.
+//
+// Never call this directly -- go through enterState(). A callback is entitled
+// to ask isConnected() and be told the truth, and it can only be told the truth
+// if the state was already updated when the callback ran.
 void setConnected(bool connected) {
     static bool wasConnected = false;
     if (connected == wasConnected) {
@@ -100,6 +106,21 @@ void setConnected(bool connected) {
             disconnectedCallback();
         }
     }
+}
+
+// Moves to a new state and only then announces it.
+//
+// The order is the whole point. isConnected() reads connectionState, and the
+// connect callback is applyFtpSetting(), which asks isConnected() to decide
+// whether to start the server. Announcing first meant it was told "not
+// connected" by the very transition that had just connected, so it stopped a
+// server that had never started -- and silently, because stopping nothing logs
+// nothing. FTP was unreachable after every boot until something else changed a
+// setting and ran applyFtpSetting() again, which is why toggling it in the menu
+// "fixed" it.
+void enterState(State next, bool connected) {
+    connectionState = next;
+    setConnected(connected);
 }
 
 String statusJson() {
@@ -140,10 +161,11 @@ void powerDown() {
     if (CaptivePortal::isActive()) {
         CaptivePortal::stop();
     }
-    setConnected(false);  // drives the disconnect callback, which stops FTP
+    // Drives the disconnect callback, which stops FTP. Idle first, for the
+    // same reason the connect side sets Connected first.
+    enterState(State::Idle, false);
     WiFi.disconnect(true, false);
     WiFi.mode(WIFI_OFF);
-    connectionState = State::Idle;
     lastAttemptFailed = false;
 }
 
@@ -228,8 +250,7 @@ void loop() {
     case State::Connecting:
         if (connected) {
             lastAttemptFailed = false;
-            setConnected(true);
-            connectionState = State::Connected;
+            enterState(State::Connected, true);
             // Tear the AP down only once there is a real connection to fall
             // back on, so a failed attempt never strands the user.
             if (CaptivePortal::isActive()) {
@@ -254,18 +275,16 @@ void loop() {
 
     case State::Connected:
         if (!connected) {
-            setConnected(false);
             // The driver auto-reconnects; just wait for it to come back.
             connectStartedMs = millis();
-            connectionState = State::Connecting;
+            enterState(State::Connecting, false);
         }
         break;
 
     case State::Portal:
         // A late connect can still land here if the AP reappeared.
         if (connected) {
-            setConnected(true);
-            connectionState = State::Connected;
+            enterState(State::Connected, true);
             CaptivePortal::stop();
         }
         break;
@@ -278,7 +297,7 @@ void loop() {
 void forget() {
     eraseCredentials();
     WiFi.disconnect(false, true);
-    setConnected(false);
+    enterState(State::Idle, false);
     LOGW(kLogTag, "Stored network forgotten");
     startPortal();
 }

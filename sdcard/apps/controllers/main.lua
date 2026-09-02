@@ -250,7 +250,7 @@ local function draw(state, spin)
     display.show()
 end
 
--- Redraw only on a real change: an e-paper frame costs ~400ms, and the stick
+-- Redraw only on a real change: an e-paper frame costs 609ms, and the stick
 -- ADC jitters by a few counts at rest. Quantising it keeps that noise from
 -- triggering a refresh of its own.
 local function signature(state, spin)

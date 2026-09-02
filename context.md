@@ -17,8 +17,13 @@ contract and the file to keep current. Nothing below duplicates it.
 
 - **Board:** LOLIN S3 PRO (ESP32-S3, 16 MB flash, PSRAM).
 - **Display:** GDEY042T81, 4.2" e-paper, 400×300, 1 bit (GxEPD2). One
-  framebuffer, 15000 bytes, a single page. Partial refresh ~400 ms, full
-  ~1200 ms.
+  framebuffer, 15000 bytes, a single page. **Measured** refresh, not the
+  driver's datasheet fallbacks: whole-panel partial **609 ms**, full
+  **1989 ms**, hibernate **102 ms**, and a flat **41 ms** more on the first
+  frame after the panel has hibernated. A partial refresh scales as
+  `402 ms + 0.70 ms/row` warm and `443 ms + 0.70 ms/row` cold — parallel
+  curves, so waking is a constant offset and not something a smaller window
+  avoids. Two thirds of any frame is fixed cost.
 - **Input:** two controllers on an I2C STEMMA QT daisy chain, both optional,
   **at least one required** (otherwise the boot stops on the error screen):
   - Adafruit ANO Rotary Navigation Encoder (seesaw, product **5740**, I2C
@@ -140,9 +145,26 @@ button.
 - **Input** — facade over **RotaryController** (5740) and **GamepadController**
   (5743); **SeesawButtons** is the shared debounce and long-press helper.
   `init()` probes both, true on ≥ 1. `poll()` owns I2C exclusively on the main
-  loop and publishes into a FreeRTOS queue; the Lua task consumes it. The bus is
-  never touched from two tasks. Buttons without a long-press fire on **press**;
-  only `rotary_select` fires on release, to disambiguate the long press.
+  loop; the Lua task consumes what it publishes. The bus is never touched from
+  two tasks. Buttons without a long-press fire on **press**; only
+  `rotary_select` fires on release, to disambiguate the long press.
+
+  It publishes **two views of the same input**, and which one an app takes
+  decides how it behaves when the panel cannot keep up:
+
+  - `read()` — the FreeRTOS queue, every edge in order. For games.
+  - `take()` — a **coalesced digest** since the last call. For screens. Relative
+    navigation adds up (`dx`, `dy`, `wheel`); a discrete `action` is a **queue
+    of one**, so a second press during a refresh is dropped rather than acted
+    on later. Navigation arriving *after* an action is held for the next
+    digest, which is what keeps a press attached to the row the user was
+    actually looking at. The wheel is folded in from the encoder's **absolute
+    position**, so coalescing it costs nothing however long a refresh blocked.
+
+  `flush()` drops all of it and rebaselines the encoder. `BootSequence` calls
+  it on every app start and launcher return; `ui.run` calls it entering and
+  leaving a screen. Without it, detents turned at the old screen land on the
+  new one.
 - **PowerButton** — press/hold detection, wake confirmation, deep-sleep entry.
   It takes an `onBeforeSleep` callback rather than calling the display itself,
   which is also what stops an early re-sleep drawing to a panel that has not
@@ -151,6 +173,10 @@ button.
   An app requests the next one with `sys.launch(path)` and *returns*; the host
   tears the state down and only then starts the next. A crash lands back at the
   launcher.
+- **Vfs** — the `/sd` vs LittleFS path vocabulary, and the SD **mount** that
+  makes it true. `mountSd()` releases an existing mount first, so it doubles as
+  the re-read behind `sys.sd_remount()`; `FtpService::start()` asks it whether
+  there is a card rather than being told.
 - **LuaContext** — the per-launch state that is not any one table's business:
   the sandbox root and the pending launch request.
 - **LuaWrapper** (lib/luawrapper) — instantiated per launch. PSRAM allocator,
@@ -169,8 +195,33 @@ button.
 launcher recognises an app by a readable `main.lua`, not by the directory flag.
 
 Shipped apps: `hello` (the worked example — relative asset load, a 1bpp sprite,
-region refresh) and `controllers` (a live schematic of both controllers, drawing
-only the ones that are attached).
+region refresh), `controllers` (a live schematic of both controllers, drawing
+only the ones that are attached) and `bench` (**Timing** — measures what a
+frame actually costs on this panel: draw, refresh, power-down and wall clock,
+per refresh mode).
+
+## Drawing: input, state, render
+
+Screens do not draw in response to an event. `ui.run` in `lib/ui.lua` is the
+loop every list screen uses, and it works one way round only:
+
+1. Ask the screen for a **signature** — two comparable values, one for the
+   chrome and one for the body — describing what the panel *should* show.
+2. Redraw only if that differs from what is on the panel. Body-only change →
+   the refresh is confined to the body region. Chrome change → whole-panel
+   partial. First frame of a screen, or one in every `refresh_every` → full,
+   against ghosting.
+3. `input.take()` for a digest, apply it to the state, round again.
+
+The consequence is that nothing is ever redrawn twice on the way to where the
+user already is: eight detents turned during a refresh cost one more frame, not
+eight. It also removes the idle repaint — the launcher signs its navbar with
+the wifi **bar count** rather than the rssi, so looking every 30 s is free and
+only an icon that would actually differ buys a refresh.
+
+The keyboard keeps its own loop because its regions are per-cell rather than
+per-screen, but it follows the same rule: move the cursor the whole way the
+digest says, then draw once.
 
 ## Four load-bearing invariants
 
@@ -275,10 +326,17 @@ There is no CI. The gate is: both environments build, `pio check` is clean over
    in order: the WiFi and FTP toggles (they touch the radio and a live server),
    the keyboard's region refresh, a scan, and the standby screen and idle
    timeout, which are the two that can only be observed by waiting.
-2. **Region refresh timing still unmeasured**, and the keyboard now depends on
-   it: every cursor move is one small region refresh. If that turns out to cost
-   the same as a whole panel, typing will be unpleasant and the honest answer
-   is to lean harder on the portal.
+2. **The deferred power-down works, but two of its edges are unverified.**
+   `Display::endFrame` no longer hibernates; `Display::loop()` does it from the
+   main loop two seconds later, with the panel behind a mutex. Confirmed on
+   hardware: `power` reads 0 across a run of frames and a warm frame is 143 ms
+   cheaper than the old regime — 753 ms down to 609 ms for a whole panel
+   (cold 651 plus a 102 ms power-down, against a warm frame that pays neither).
+
+   Still unwatched: that the standby screen and the idle sleep leave a
+   hibernated panel (both go through `Display::powerDown()`, which now takes the
+   panel lock), and that nothing stalls when an app draws while FTP is
+   serving.
 3. **Still unconfirmed from the earlier refactor:** `display.bitmap` in the
    hello app, and the redrawn logo with its hidden-line removal.
 4. **32-bit integers and floats in Lua** (from `LUA_32BITS`) — sufficient for

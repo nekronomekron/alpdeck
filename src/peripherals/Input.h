@@ -10,8 +10,15 @@
 // two players each holding one controller.
 //
 // Threading: poll() owns the I2C bus and only ever runs on the main loop. Lua
-// apps run on their own task and consume events through a FreeRTOS queue, so
+// apps run on their own task and consume input through FreeRTOS primitives, so
 // the bus is never touched from two tasks and needs no lock of its own.
+//
+// There are two ways to consume the same input, and which one an app picks
+// decides how it behaves when it cannot keep up with the user:
+//
+//   read() -- every edge, in order, oldest first. What a game wants.
+//   take() -- one coalesced digest of everything since the last call. What a
+//             screen with a 609ms refresh wants.
 namespace Input {
 
 constexpr const char* kLogTag = "Input";
@@ -70,6 +77,34 @@ struct Snapshot {
     uint16_t gamepadStickY = 0;
 };
 
+// Everything that happened since the last take(), coalesced.
+//
+// The queue behind read() is the right shape for a game and the wrong shape
+// for a screen. A whole-panel refresh measures 609ms here, and a user turning
+// the dial puts eight detents into the queue while one frame is being pushed;
+// draining them one at a time then costs five more seconds to arrive where the
+// dial already was. The digest collapses that into a single move.
+//
+// The two classes of event are treated differently because they fail
+// differently. Navigation is relative and safe to add up: eight detents is one
+// move of eight, and nothing is lost by never having drawn the seven cells in
+// between. An action is a commitment and must be neither invented nor doubled,
+// so exactly one is held -- a second press arriving while one is still pending
+// is dropped rather than queued behind it.
+struct Digest {
+    int16_t navX = 0;   // net steps right; negative is left
+    int16_t navY = 0;   // net steps down; negative is up
+    int16_t wheel = 0;  // net detents cw; negative is ccw
+
+    // The first discrete press since the last take(), Event::None when there
+    // was none.
+    Event action = Event::None;
+
+    bool any() const {
+        return navX != 0 || navY != 0 || wheel != 0 || action != Event::None;
+    }
+};
+
 // Brings up I2C and probes both controllers. Returns true when at least one
 // was found; false means the device has no way to be operated and the boot
 // must not continue into the launcher.
@@ -87,11 +122,31 @@ void poll();
 // timeoutMs > 0 blocks the calling task until an event arrives.
 Event read(uint32_t timeoutMs = 0);
 
+// Consumes the digest. timeoutMs > 0 blocks the calling task until there is
+// something in it. Safe from any task.
+//
+// Navigation arriving AFTER an action is held back for the next digest, so an
+// action always applies to the position the user was looking at when they
+// pressed it, never to one the same digest moved them to afterwards. That
+// ordering is the reason this is not just a pair of counters.
+//
+// take() consumes the read() queue as well: the two are views of the same
+// input, and a screen mixing them would see a press once or twice depending on
+// timing. Pick one per app and stay with it.
+Digest take(uint32_t timeoutMs = 0);
+
 // Copy of what the last poll() saw. Safe from any task: it reads a cached
 // snapshot and never touches the I2C bus.
 Snapshot snapshot();
 
-// Drops anything queued, so a starting app does not inherit stale presses.
+// Drops everything buffered -- the queue, the digest, and the wheel travel
+// that has not been reported yet -- and rebaselines the encoder on where it
+// stands now.
+//
+// Call this on every context switch: starting an app, opening a screen,
+// returning from one. Without it the detents a user turned while looking at
+// the previous screen arrive on the next one and move a cursor they were not
+// even watching, which is the single most confusing thing input can do.
 void flush();
 
 const char* eventName(Event event);

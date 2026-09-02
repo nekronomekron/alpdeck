@@ -105,15 +105,38 @@ int show(lua_State* L) {
     return 0;
 }
 
+// power_down() -- hibernate the panel now rather than letting the main loop do
+// it a couple of seconds after the drawing stops.
+//
+// Two uses, and neither is "after every frame". Measuring what waking the panel
+// costs, by putting it down before a frame and timing that frame against one
+// drawn on a panel that was still awake. And an app that has drawn its last
+// screen and would rather hand back with the panel already down.
+//
+// Calling it between ordinary frames simply puts back the 102ms power-down and
+// the reset that deferring it exists to avoid.
+int powerDown(lua_State* L) {
+    (void)L;
+    Display::powerDown();
+    return 0;
+}
+
 int size(lua_State* L) {
     lua_pushinteger(L, Display::width());
     lua_pushinteger(L, Display::height());
     return 2;
 }
 
+// timing() -> refreshMs, powerDownMs
+//
+// Two numbers rather than one because they have different cures: a slow
+// refresh is answered with a smaller region or fewer frames, a slow power-down
+// is the panel being hibernated after every frame and nothing an app can do
+// about it from up here.
 int timing(lua_State* L) {
     lua_pushinteger(L, static_cast<lua_Integer>(Display::lastRefreshMs()));
-    return 1;
+    lua_pushinteger(L, static_cast<lua_Integer>(Display::lastPowerDownMs()));
+    return 2;
 }
 
 int color(lua_State* L) {
@@ -284,6 +307,7 @@ int bitmap(lua_State* L) {
 const luaL_Reg kFunctions[] = {
     {"begin", begin},         {"show", show},
     {"size", size},           {"timing", timing},
+    {"power_down", powerDown},
     {"color", color},         {"font", font},
     {"clear", clear},         {"text", text},
     {"measure", measure},

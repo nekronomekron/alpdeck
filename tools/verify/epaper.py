@@ -19,6 +19,11 @@ from gfx import BLACK, WHITE, Canvas, load_font
 PANEL_WIDTH = 400
 PANEL_HEIGHT = 300
 
+# What the first frame after a hibernate costs extra: a hardware reset and a
+# re-init. Measured at a flat 41ms across every window size, which is why it is
+# added rather than scaled.
+PANEL_WAKE_MS = 41
+
 
 class Panel:
     def __init__(self, width=PANEL_WIDTH, height=PANEL_HEIGHT, font=None):
@@ -38,6 +43,15 @@ class Panel:
         self.full_refreshes = 0
         self.partial_refreshes = 0
         self.frames_shown = 0
+
+        # What the last frame would have cost on the device. Measured on the
+        # GDEY042T81: a warm partial refresh is 402ms fixed plus 0.70ms a row, a
+        # warm full one drives the whole panel at 1989ms, and a panel that had
+        # hibernated costs a flat 41ms more for the reset and re-init. Modelled
+        # rather than guessed so a script that paces itself off display.timing()
+        # is exercised against the shape of the real thing.
+        self.last_refresh_ms = 0
+        self.hibernated = False
 
     # Mirrors Display::beginFrame(bool partial). Note the default is *full*,
     # which is what an implicit open from a bare draw call gets.
@@ -80,10 +94,15 @@ class Panel:
             )
 
         self.frames_shown += 1
+        wake = PANEL_WAKE_MS if self.hibernated else 0
+        self.hibernated = False
+
         if getattr(self, "_partial", False):
             self.partial_refreshes += 1
+            self.last_refresh_ms = int(round(402 + 0.70 * h)) + wake
         else:
             self.full_refreshes += 1
+            self.last_refresh_ms = 1989 + wake
 
         self.canvas.set_clip(0, 0, self.width, self.height)
 

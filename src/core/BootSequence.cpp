@@ -7,6 +7,7 @@
 
 #include "config/AppConfig.h"
 #include "core/Settings.h"
+#include "core/Vfs.h"
 #include "core/lua/LuaContext.h"
 #include "core/lua/LuaHost.h"
 #include "net/FtpService.h"
@@ -19,8 +20,6 @@
 
 namespace BootSequence {
 namespace {
-
-bool sdMounted = false;
 
 // How long to wait for a serial monitor to attach before giving up on it.
 constexpr uint32_t kSerialAttachTimeoutMs = 1000;
@@ -45,6 +44,10 @@ void startLauncher() {
     // The launcher only browses; an empty root denies it every fs write.
     LuaContext::setSandboxRoot("");
 
+    // The biggest context switch there is. Whatever the user was pressing at
+    // the app they just left must not arrive here and move the selection.
+    Input::flush();
+
     if (!LuaHost::run(Config::LAUNCHER_PATH)) {
         // Without a launcher there is nothing to operate. A fresh flash where
         // the filesystem image was never uploaded lands here.
@@ -61,6 +64,11 @@ void startApp(const String& path) {
     }
     LuaContext::setSandboxRoot(root);
 
+    // The select that launched this app is long since consumed, but the detents
+    // turned during the launcher's last refresh are not, and they belong to a
+    // screen that no longer exists.
+    Input::flush();
+
     if (!LuaHost::run(path)) {
         LOGE(kLogTag, "%s could not start; returning to the launcher",
              path.c_str());
@@ -72,13 +80,20 @@ void startApp(const String& path) {
 // connection state are checked together. Called on a settings change and from
 // the connect callback, which is what keeps one rule in one place.
 void applyFtpSetting() {
-    const bool wanted = Settings::getBool(Settings::kFtpEnabled) &&
-                        NetworkService::isConnected();
-    if (wanted) {
-        FtpService::start(sdMounted);
-    } else {
-        FtpService::stop();
+    const bool enabled = Settings::getBool(Settings::kFtpEnabled);
+    const bool connected = NetworkService::isConnected();
+
+    if (enabled && connected) {
+        FtpService::start();
+        return;
     }
+
+    // Logged rather than silent. Declining to start a server that was never
+    // running logs nothing on its own, which is how an FTP service that never
+    // came up after a boot went unnoticed for as long as it did.
+    LOGD(kLogTag, "FTP not started (enabled=%d, connected=%d)",
+         static_cast<int>(enabled), static_cast<int>(connected));
+    FtpService::stop();
 }
 
 // The kernel's half of the declarative settings contract: Lua writes a value,
@@ -155,15 +170,10 @@ void mountFilesystems() {
 
     // The SD card shares the display's SPI bus; Display::init() already called
     // SPI.begin() for it, and the display is hibernated by now with CS
-    // released.
-    sdMounted = SD.begin(Config::SD_PIN_CS, SPI);
-    if (!sdMounted) {
-        LOGW("FS", "SD mount failed; /%s will not be served",
-             Config::FTP_MOUNT_SD);
-        return;
+    // released. Vfs owns the mount, because it owns what /sd means.
+    if (!Vfs::mountSd()) {
+        return;  // it logged why; the device runs on flash alone
     }
-
-    LOGI("FS", "SD mounted (%llu bytes)", SD.cardSize());
 
     // Log the card's top level. Apps live at /apps here (the /sd prefix is a
     // virtual mount the bindings strip), so this is a quick check that the
@@ -273,6 +283,7 @@ void loop() {
     NetworkService::loop();
     FtpService::loop();
     Input::poll();
+    Display::loop();
     LuaHost::loop();
     PowerButton::poll();
     checkIdleTimeout();

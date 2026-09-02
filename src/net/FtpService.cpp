@@ -7,6 +7,7 @@
 #include <WiFi.h>
 
 #include "config/AppConfig.h"
+#include "core/Vfs.h"
 #include "utils/Logger.h"
 
 namespace FtpService {
@@ -16,7 +17,6 @@ namespace {
 // destructor chain (~FTPServer -> ~WiFiServer -> end()) closes the listening
 // socket and drops every connection, which is the only clean way to stop it.
 FTPServer* server = nullptr;
-bool sdAvailable = false;
 
 // Its own namespace, alongside the WiFi credentials rather than in the general
 // settings store: a password that any app could read back is not a password.
@@ -41,18 +41,16 @@ Login loadLogin() {
 
 }  // namespace
 
-void start(bool sdMounted) {
+void start() {
     if (server != nullptr) {
         return;
     }
-
-    sdAvailable = sdMounted;
 
     const Login login = loadLogin();
     server = new FTPServer();
     server->addUser(login.user, login.password);
     server->addFilesystem(Config::FTP_MOUNT_FLASH, &LittleFS);
-    if (sdMounted) {
+    if (Vfs::sdMounted()) {
         server->addFilesystem(Config::FTP_MOUNT_SD, &SD);
     }
     server->begin();
@@ -71,6 +69,14 @@ void stop() {
     LOGI(kLogTag, "Server stopped");
 }
 
+void remount() {
+    if (server == nullptr) {
+        return;  // nothing running to disagree with the card
+    }
+    stop();
+    start();
+}
+
 void configure(const String& user, const String& password) {
     Preferences prefs;
     prefs.begin(kPrefsNamespace, false);
@@ -84,7 +90,7 @@ void configure(const String& user, const String& password) {
     // keeps the old login until it is rebuilt.
     if (server != nullptr) {
         stop();
-        start(sdAvailable);
+        start();
     }
 }
 

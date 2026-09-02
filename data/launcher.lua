@@ -25,9 +25,10 @@ local MANIFEST = "app.lua"
 
 local VISIBLE = ui.visibleRows(H)
 
--- Redraw on this cadence even with no input, so the wifi indicator does not go
--- stale on a device sitting idle.
-local IDLE_REDRAW_MS = 30000
+-- Look at the state again on this cadence even with no input, so the wifi
+-- indicator does not go stale on a device sitting idle. Looking is free: the
+-- screen only redraws if the icon would actually come out different.
+local IDLE_LOOK_MS = 30000
 
 --------------------------------------------------------------------- model --
 
@@ -40,15 +41,29 @@ local state = {
     apps = {},
     focus = 1,
     top = 1,
-    refreshes = 0,
 }
 
--- Moves focus and scrolls the window to keep it visible. Returns true only when
--- something changed, so the caller does not pay 400ms for a refresh with
--- nothing new to show.
+-- Moves focus and scrolls the window to keep it visible. Says nothing about
+-- whether anything changed: the render loop compares the state to what is on
+-- the panel, so a move that goes nowhere costs no refresh without this having
+-- to report it.
 --
 -- Clamped, not wrapped, at both ends: reaching an end stops there. Wrapping
--- made a long list feel like it had lost your place.
+-- made a long list feel like it had lost your place. Clamping is also what
+-- makes a whole turn of the dial safe to apply in one step.
+-- Scrolls the window so the focused row is inside it. The menu icon is not a
+-- row, so focusing it leaves the window alone.
+local function scrollIntoView()
+    if state.focus < 1 then
+        return
+    end
+    if state.focus < state.top then
+        state.top = state.focus
+    elseif state.focus >= state.top + VISIBLE then
+        state.top = state.focus - VISIBLE + 1
+    end
+end
+
 local function moveBy(delta)
     local target = state.focus + delta
     if target < MENU_FOCUS then
@@ -56,20 +71,9 @@ local function moveBy(delta)
     elseif target > #state.apps then
         target = math.max(MENU_FOCUS, #state.apps)
     end
-
-    if target == state.focus then
-        return false
-    end
     state.focus = target
 
-    if state.focus >= 1 then
-        if state.focus < state.top then
-            state.top = state.focus
-        elseif state.focus >= state.top + VISIBLE then
-            state.top = state.focus - VISIBLE + 1
-        end
-    end
-    return true
+    scrollIntoView()
 end
 
 ----------------------------------------------------------------- discovery --
@@ -100,6 +104,12 @@ local function manifestFor(dir)
 end
 
 local function discover()
+    -- Remember where the cursor was, so a rescan does not move it out from
+    -- under the user. That is what lets this run after anything -- the options
+    -- menu, an SD remount -- instead of only on an explicit rescan.
+    local focused = state.apps[state.focus] and state.apps[state.focus].path
+    local onMenu = state.focus == MENU_FOCUS
+
     state.apps = {}
     state.top = 1
 
@@ -140,6 +150,21 @@ local function discover()
     -- With no apps there is nothing to focus but the menu, which is also the
     -- only thing that can fix the situation.
     state.focus = #state.apps > 0 and 1 or MENU_FOCUS
+
+    if onMenu then
+        state.focus = MENU_FOCUS
+    elseif focused then
+        -- By path, not by index: the point of remembering is to survive a list
+        -- that gained or lost an app, and an index would not.
+        for index, app in ipairs(state.apps) do
+            if app.path == focused then
+                state.focus = index
+                break
+            end
+        end
+    end
+
+    scrollIntoView()
 end
 
 ------------------------------------------------------------------- drawing --
@@ -161,16 +186,10 @@ local function drawAppRow(app, y, active)
     ui.rowValue(label, y, W)
 end
 
+-- Draws the whole screen. It does not open or show the frame, and it never
+-- decides a refresh mode: ui.run owns both, because only the loop knows whether
+-- this frame is a cursor move inside the list or a new screen.
 local function draw()
-    -- The refresh mode is fixed for the life of the frame, so it is chosen here
-    -- at begin() and nowhere else. How often a full refresh happens is a
-    -- setting, because how quickly ghosting builds up depends on the panel.
-    state.refreshes = state.refreshes + 1
-    local every = settings.get("refresh_every")
-    local full = state.refreshes % every == 1
-
-    display.begin(full and "full" or "partial")
-
     ui.navbar{
         width = W,
         title = "alpdeck",
@@ -192,8 +211,33 @@ local function draw()
             render = drawAppRow,
         }
     end
+end
 
-    display.show()
+-- What the panel is showing, in three parts.
+--
+-- The split is what buys the cheap refresh. Moving the cursor changes only the
+-- third value, and ui.run then repaints the two rows involved -- 435ms against
+-- the 609ms a whole panel costs. A scroll or a rescan changes the body, and
+-- only the navbar changing drives the whole panel.
+--
+-- The navbar signs itself with the wifi BAR COUNT rather than the rssi: the raw
+-- value drifts by a dBm between reads and would buy a refresh every half minute
+-- to redraw an identical icon.
+local function signature()
+    local wifi = sys.wifi()
+    local chrome = table.concat({
+        state.focus == MENU_FOCUS and "menu" or "list",
+        wifi.enabled and "on" or "off",
+        ui.wifiBars(wifi),
+    }, "|")
+
+    return chrome, table.concat({ state.top, #state.apps }, "|"), state.focus
+end
+
+-- Only ever called for a move that left state.top alone, so both the old and
+-- the new row are measured against the same window.
+local function cursorRect(index)
+    return ui.rowRect(index, state.top, W)
 end
 
 ------------------------------------------------------------------- screens --
@@ -202,7 +246,12 @@ end
 -- backs out. Every sub-screen in the launcher is one of these, so they all
 -- behave the same way.
 --
--- opts: title, items (each {label=, value=, action=, disabled=}), footer
+-- opts: title, items, footer. An item is
+--   {label=, value=, action=, disabled=, header=, screen=}
+-- where `screen` marks a row whose action takes the panel over -- a keyboard,
+-- a message, another menu. Those need a repaint afterwards; a row that only
+-- changes a setting does not, because the value is part of the signature and
+-- redraws like any other change.
 local function runMenu(opts)
     local listTop = ui.LIST_TOP
     local visible = ui.visibleRows(H - 24, listTop)
@@ -227,8 +276,7 @@ local function runMenu(opts)
         ui.rowValue(value, y, W)
     end
 
-    local function paint(full)
-        display.begin(full and "full" or "partial")
+    local function draw()
         ui.header(opts.title, W)
         ui.list{
             items = opts.items,
@@ -241,47 +289,93 @@ local function runMenu(opts)
         }
         ui.footer(opts.footer or "select to change   long-press / B to go back",
             W, H)
-        display.show()
     end
 
-    paint(true)
+    -- The title never changes, so nothing here ever drives the whole panel. The
+    -- visible rows' values are part of the body: a toggle moves no cursor, and
+    -- the screen still has to show what it did.
+    local function signature()
+        local parts = { top }
+        for index = top, math.min(top + visible - 1, #opts.items) do
+            local item = opts.items[index]
+            parts[#parts + 1] = item.value and tostring(item.value()) or ""
+            parts[#parts + 1] = (item.disabled and item.disabled()) and "-" or ""
+        end
+        return opts.title, table.concat(parts, "|"), selected
+    end
 
-    while true do
-        local event = input.read(120000)
+    -- One step at a time even for a digest of eight, because the rows that can
+    -- be selected are not evenly spaced -- nextSelectable is what skips the
+    -- group labels, and it only knows how to take one step.
+    local function moveBy(steps)
+        local direction = steps > 0 and 1 or -1
+        for _ = 1, math.abs(steps) do
+            local target = ui.nextSelectable(opts.items, selected, direction)
+            if not target then
+                break  -- an end of the list; stop there rather than wrapping
+            end
+            selected = target
+        end
 
-        if event == nil or ui.BACK[event] then
-            return
-        elseif ui.DOWN[event] or ui.UP[event] then
-            local target = ui.nextSelectable(opts.items, selected,
-                ui.DOWN[event] and 1 or -1)
-            if target then
-                selected = target
-                if selected < top then
-                    top = selected
-                elseif selected >= top + visible then
-                    top = selected - visible + 1
-                end
-                -- Scrolling up onto the first row of a group brings its label
-                -- along, otherwise the section arrives unlabelled. Only when
-                -- the selection is at the top of the window: shifting it in
-                -- any other case would push the selection off the bottom.
-                if selected == top and top > 1 and opts.items[top - 1].header then
-                    top = top - 1
-                end
-                paint(false)
-            end
-        elseif ui.CONFIRM[event] or ui.LEFT[event] or ui.RIGHT[event] then
-            local item = opts.items[selected]
-            if item and item.action and not (item.disabled and item.disabled()) then
-                -- The action owns the screen while it runs, so repaint fully
-                -- afterwards rather than assuming anything survived.
-                if item.action(ui.LEFT[event] and -1 or 1) == "close" then
-                    return
-                end
-                paint(true)
-            end
+        if selected < top then
+            top = selected
+        elseif selected >= top + visible then
+            top = selected - visible + 1
+        end
+        -- Scrolling up onto the first row of a group brings its label along,
+        -- otherwise the section arrives unlabelled. Only when the selection is
+        -- at the top of the window: shifting it in any other case would push
+        -- the selection off the bottom.
+        if selected == top and top > 1 and opts.items[top - 1].header then
+            top = top - 1
         end
     end
+
+    local function apply(nav)
+        local steps = ui.steps(nav)
+        if steps ~= 0 then
+            moveBy(steps)
+        end
+
+        if nav.action and ui.BACK[nav.action] then
+            return "close"
+        end
+
+        -- Select and right both mean "forward", left means "back one value".
+        -- The dial's travel goes through as a count, so a setting steps by as
+        -- far as the user actually turned rather than by one per refresh.
+        local direction = (nav.action and ui.CONFIRM[nav.action]) and 1 or nav.dx
+        if direction == 0 then
+            return
+        end
+
+        local item = opts.items[selected]
+        if not item or not item.action or (item.disabled and item.disabled()) then
+            return
+        end
+
+        if item.action(direction) == "close" then
+            return "close"
+        end
+        if item.screen then
+            return "repaint"
+        end
+    end
+
+    ui.run{
+        idleMs = 120000,
+        body = ui.bodyRegion(H, 24),
+        cursorRect = function(index)
+            return ui.rowRect(index, top, W, listTop)
+        end,
+        signature = signature,
+        draw = draw,
+        apply = apply,
+        -- Two minutes untouched is someone who walked away, not someone
+        -- reading. Leaving a settings screen standing open is how a device
+        -- gets found in a state nobody meant to leave it in.
+        onIdle = function() return "close" end,
+    }
 end
 
 -- A full-screen message with a single way out. Used for results and for the
@@ -295,7 +389,12 @@ local function showMessage(title, lines, footer)
     ui.footer(footer or "any key to go back", W, H)
     display.show()
 
-    input.read(120000)
+    -- Flush AFTER the refresh, not before it: the long-press that opened this
+    -- screen is still an action, and so is anything pressed during the second
+    -- the panel spent drawing a message nobody could read yet. Either would
+    -- dismiss it on the spot.
+    input.flush()
+    input.take(120000)
 end
 
 -- Drawn before a blocking call, so the device does not look wedged during the
@@ -327,6 +426,7 @@ local function wifiSetup()
     for _, network in ipairs(networks) do
         items[#items + 1] = {
             label = network.ssid,
+            screen = true,  -- raises the keyboard
             value = function()
                 return (network.open and "open  " or "") .. network.rssi .. "dBm"
             end,
@@ -381,6 +481,41 @@ local function ftpLogin()
         "the new login." })
 end
 
+local function refreshSdCard()
+    -- The remount releases the card and takes it again, so anything reading it
+    -- has to be finished first. Drawing this before the call is not only
+    -- politeness: it is the last chance to touch the panel and the card in a
+    -- known order.
+    showBusy("sd card", "re-reading...")
+
+    if sys.sd_remount() then
+        showMessage("sd card", {
+            "card re-read.",
+            "",
+            "the app list has been rescanned.",
+        })
+    else
+        showMessage("sd card", {
+            "no card found.",
+            "",
+            "check that it is seated, then try",
+            "again.",
+        })
+    end
+end
+
+local function restart()
+    -- E-paper holds its image with no power, so whatever is on the panel when
+    -- the reset hits stays there for the whole boot. Leaving a menu up would
+    -- look like a device that had hung at the moment it was told to restart.
+    display.begin("full")
+    ui.header("restart", W)
+    display.text(ui.MARGIN, ui.LIST_TOP + 10, "restarting...", 2)
+    display.show()
+
+    sys.restart()  -- does not return
+end
+
 local function deviceInfo()
     local info = sys.info()
     local wifi = sys.wifi()
@@ -431,12 +566,9 @@ local function cycle(key, choices, direction)
         end
     end
 
-    index = index + (direction or 1)
-    if index < 1 then
-        index = #choices
-    elseif index > #choices then
-        index = 1
-    end
+    -- Wraps for any step size, not just one: a digest hands over a whole turn
+    -- of the dial at once, so index + direction can land well outside the list.
+    index = (index - 1 + (direction or 1)) % #choices + 1
 
     settings.set(key, choices[index])
 end
@@ -475,11 +607,13 @@ local function optionsMenu()
             },
             {
                 label = "setup",
+                screen = true,
                 action = function() wifiSetup() end,
                 disabled = needsWifi,
             },
             {
                 label = "setup portal",
+                screen = true,
                 action = function()
                     sys.wifi_portal()
                     showMessage("setup portal", {
@@ -491,6 +625,7 @@ local function optionsMenu()
             },
             {
                 label = "forget network",
+                screen = true,
                 action = function()
                     sys.wifi_forget()
                     showMessage("wifi", { "stored network forgotten." })
@@ -508,6 +643,7 @@ local function optionsMenu()
             },
             {
                 label = "login",
+                screen = true,
                 action = function() ftpLogin() end,
                 disabled = needsWifi,
             },
@@ -529,7 +665,7 @@ local function optionsMenu()
                 action = toggle("standby_screen"),
             },
 
-            { header = true, label = "general" },
+            { header = true, label = "display" },
             {
                 label = "full refresh",
                 value = function()
@@ -539,9 +675,22 @@ local function optionsMenu()
                     cycle("refresh_every", REFRESH_CHOICES, direction)
                 end,
             },
+
+            { header = true, label = "device" },
             {
-                label = "device info",
+                label = "info",
+                screen = true,
                 action = function() deviceInfo() end,
+            },
+            {
+                label = "refresh sd card",
+                screen = true,
+                action = function() refreshSdCard() end,
+            },
+            {
+                label = "restart",
+                screen = true,
+                action = function() restart() end,
             },
         },
     }
@@ -549,35 +698,56 @@ end
 
 --------------------------------------------------------------------- input --
 
-discover()
-draw()
+-- Nothing here draws. It changes the model and says what should happen to the
+-- screen; ui.run decides whether that is worth a refresh and what kind.
+local function apply(nav)
+    -- Navigation first, always. A digest can carry both a turn and a press, and
+    -- the press was made after the turn -- applying them the other way round
+    -- would select the row the user was leaving.
+    moveBy(ui.steps(nav))
 
-while true do
-    local event = input.read(IDLE_REDRAW_MS)
+    -- Left is back, and the launcher is where back stops: there is nothing
+    -- above it, so it rescans the card instead.
+    if nav.dx < 0 then
+        discover()
+        return
+    end
 
-    if event == nil then
-        draw()  -- timeout: keep the wifi indicator honest
-    elseif ui.DOWN[event] then
-        if moveBy(1) then draw() end
-    elseif ui.UP[event] then
-        if moveBy(-1) then draw() end
-    elseif ui.CONFIRM[event] then
+    local action = nav.action
+    if action == nil then
+        return
+    end
+
+    if ui.BACK[action] then
+        discover()
+    elseif ui.CONFIRM[action] then
         if state.focus == MENU_FOCUS then
             optionsMenu()
-            draw()
+            -- Cheap, and the menu can have re-read the card underneath us.
+            -- discover() keeps the cursor where it was, so this is invisible
+            -- when nothing changed.
+            discover()
+            return "repaint"
         elseif #state.apps == 0 then
             discover()
-            draw()
         else
             local app = state.apps[state.focus]
             sys.log("launching " .. app.path)
             sys.launch(app.path)
-            -- Returning hands control back to the host, which tears this state
-            -- down before starting the app. Never launch from inside the loop.
-            return
+            -- Leaving the loop hands control back to the host, which tears this
+            -- state down before starting the app. Never launch from inside it.
+            return "close"
         end
-    elseif ui.BACK[event] or ui.LEFT[event] then
-        discover()
-        draw()
     end
 end
+
+discover()
+
+ui.run{
+    idleMs = IDLE_LOOK_MS,
+    body = ui.bodyRegion(H),
+    cursorRect = cursorRect,
+    signature = signature,
+    draw = draw,
+    apply = apply,
+}
