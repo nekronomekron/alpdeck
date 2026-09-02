@@ -360,6 +360,18 @@ the difference first.
 - **Both controllers are detected** (rotary at 0x49, gamepad at 0x50), as of
   2026-08-30.
 - **The refactored firmware runs on hardware, and the fatal halt works.**
+- **The 2026-09-02 restructure runs on hardware**, exercised in three passes:
+  boot, launcher, launching an app and coming back, and navigating with both
+  the dial and the d-pad; the options menu clicked through end to end (the WiFi
+  and FTP toggles, a scan, the keyboard, the SD refresh, restart and device
+  info); and FTP served live against `/flash` and `/sd` with the timing bench
+  run against it.
+
+  That is the C side of every binding this restructure touched: the FTP
+  reconcile on the main loop, `PanelPower::Lock` under real frames, the digest
+  after its move into `InputDigest`, and the `wifi.*` / `ftp.*` tables. It also
+  answers the stall question — nothing hangs when an app draws while FTP is
+  serving.
 
 **Built and verified off-device only:**
 
@@ -368,45 +380,29 @@ the difference first.
   BootSequence, the reworked Lua API (fonts, ink, sprites, region refresh,
   `sys.appdir`, `sys.info().api`), the reworked launcher, and the redrawn logo
   and bootscreen.
-- Network, captive portal and FTP with `/flash` + `/sd`.
+- The captive portal.
 
 ## Open points
 
-0. **Nothing since the 2026-09-02 restructure has run on hardware.** Both
-   environments build, `pio check` is clean and the harness renders every state
-   byte-identical apart from one deliberate pixel change, but that says nothing
-   about the C side of a binding. In order of what would hurt most if wrong:
-   the FTP reconcile (the server is built and torn down on the main loop now),
-   the deferred power-down through `PanelPower::Lock`, the digest after its move
-   into `InputDigest`, and the `wifi.*` / `ftp.*` tables.
+1. **The two states you only see by waiting.** Everything else in the options
+   menu has now run on hardware; the standby screen and the idle sleep have
+   not, because reaching either means leaving the device alone for as long as
+   `sleep_after_min` says. Both go through `Display::powerDown()`, which takes
+   the panel lock, so what to look for is a panel that is genuinely hibernated
+   afterwards rather than left with its rail up.
 
-   **Re-copy the SD card before testing.** The API is 2, and an app declaring
-   1 is marked `api!` in the launcher.
-
-1. **The options menu has not run on hardware.** It builds and passes the
-   harness, but the harness cannot see the C side of a binding. Worth checking
-   in order: the WiFi and FTP toggles (they touch the radio and a live server),
-   the keyboard's region refresh, a scan, and the standby screen and idle
-   timeout, which are the two that can only be observed by waiting.
-2. **The deferred power-down works, but two of its edges are unverified.**
-   `Display::endFrame` no longer hibernates; `Display::loop()` does it from the
-   main loop two seconds later, with the panel behind a mutex. Confirmed on
-   hardware: `power` reads 0 across a run of frames and a warm frame is 143 ms
-   cheaper than the old regime — 753 ms down to 609 ms for a whole panel
-   (cold 651 plus a 102 ms power-down, against a warm frame that pays neither).
-
-   Still unwatched: that the standby screen and the idle sleep leave a
-   hibernated panel (both go through `Display::powerDown()`, which now takes the
-   panel lock), and that nothing stalls when an app draws while FTP is
-   serving.
-3. **Still unconfirmed from the earlier refactor:** `display.bitmap` in the
+   The rest of the deferred power-down is confirmed: `power` reads 0 across a
+   run of frames and a warm frame is 143 ms cheaper than the old regime —
+   753 ms down to 609 ms for a whole panel (cold 651 plus a 102 ms power-down,
+   against a warm frame that pays neither).
+2. **Still unconfirmed from the earlier refactor:** `display.bitmap` in the
    hello app, and the redrawn logo with its hidden-line removal.
-4. **32-bit integers and floats in Lua** (from `LUA_32BITS`) — sufficient for
+3. **32-bit integers and floats in Lua** (from `LUA_32BITS`) — sufficient for
    the launcher and apps, but a deliberate trade against 64-bit and double.
-5. **Old committed WiFi credentials** (`IoT`/`05021904`) are still in the git
+4. **Old committed WiFi credentials** (`IoT`/`05021904`) are still in the git
    history (commit fc1434d). Rotate them if the repository is ever public.
-6. **FTP credentials default to alpdeck/alpdeck** until changed in the menu.
+5. **FTP credentials default to alpdeck/alpdeck** until changed in the menu.
    Anyone on the same network can write to flash with the default login.
-7. **No native toolchain,** so `test/native/` sits unrun and the C++-drawn
+6. **No native toolchain,** so `test/native/` sits unrun and the C++-drawn
    screens can only be previewed through a ported renderer rather than the real
    code.
