@@ -13,6 +13,7 @@
 -- outside the model section.
 
 local ui = sys.import("/lib/ui.lua")
+local screen = sys.import("/lib/screen.lua")
 
 local W, H = display.size()
 local INFO = sys.info()
@@ -187,7 +188,7 @@ local function drawAppRow(app, y, active)
 end
 
 -- Draws the whole screen. It does not open or show the frame, and it never
--- decides a refresh mode: ui.run owns both, because only the loop knows whether
+-- decides a refresh mode: screen.run owns both, because only the loop knows whether
 -- this frame is a cursor move inside the list or a new screen.
 local function draw()
     ui.navbar{
@@ -216,7 +217,7 @@ end
 -- What the panel is showing, in three parts.
 --
 -- The split is what buys the cheap refresh. Moving the cursor changes only the
--- third value, and ui.run then repaints the two rows involved -- 435ms against
+-- third value, and screen.run then repaints the two rows involved -- 435ms against
 -- the 609ms a whole panel costs. A scroll or a rescan changes the body, and
 -- only the navbar changing drives the whole panel.
 --
@@ -336,19 +337,19 @@ local function runMenu(opts)
     end
 
     local function apply(nav)
-        local steps = ui.steps(nav)
+        local steps = screen.steps(nav)
         if steps ~= 0 then
             moveBy(steps)
         end
 
-        if nav.action and ui.BACK[nav.action] then
+        if nav.action and screen.BACK[nav.action] then
             return "close"
         end
 
         -- Select and right both mean "forward", left means "back one value".
         -- The dial's travel goes through as a count, so a setting steps by as
         -- far as the user actually turned rather than by one per refresh.
-        local direction = (nav.action and ui.CONFIRM[nav.action]) and 1 or nav.dx
+        local direction = (nav.action and screen.CONFIRM[nav.action]) and 1 or nav.dx
         if direction == 0 then
             return
         end
@@ -366,7 +367,7 @@ local function runMenu(opts)
         end
     end
 
-    ui.run{
+    screen.run{
         idleMs = 120000,
         body = ui.bodyRegion(H, 24),
         cursorRect = function(index)
@@ -703,12 +704,12 @@ end
 --------------------------------------------------------------------- input --
 
 -- Nothing here draws. It changes the model and says what should happen to the
--- screen; ui.run decides whether that is worth a refresh and what kind.
+-- screen; screen.run decides whether that is worth a refresh and what kind.
 local function apply(nav)
     -- Navigation first, always. A digest can carry both a turn and a press, and
     -- the press was made after the turn -- applying them the other way round
     -- would select the row the user was leaving.
-    moveBy(ui.steps(nav))
+    moveBy(screen.steps(nav))
 
     -- Left is back, and the launcher is where back stops: there is nothing
     -- above it, so it rescans the card instead.
@@ -722,9 +723,9 @@ local function apply(nav)
         return
     end
 
-    if ui.BACK[action] then
+    if screen.BACK[action] then
         discover()
-    elseif ui.CONFIRM[action] then
+    elseif screen.CONFIRM[action] then
         if state.focus == MENU_FOCUS then
             optionsMenu()
             -- Cheap, and the menu can have re-read the card underneath us.
@@ -747,7 +748,7 @@ end
 
 discover()
 
-ui.run{
+screen.run{
     idleMs = IDLE_LOOK_MS,
     body = ui.bodyRegion(H),
     cursorRect = cursorRect,

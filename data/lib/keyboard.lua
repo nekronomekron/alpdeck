@@ -27,6 +27,7 @@
 -- gesture, and only a grid can tell the difference.
 
 local ui = sys.import("/lib/ui.lua")
+local screen = sys.import("/lib/screen.lua")
 
 local keyboard = {}
 
@@ -422,9 +423,9 @@ function keyboard.prompt(opts)
 
         local action = nav.action
         if action then
-            if ui.BACK[action] then
+            if screen.BACK[action] then
                 return nil
-            elseif ui.CONFIRM[action] then
+            elseif screen.CONFIRM[action] then
                 if activate(state) == "done" then
                     return state.value
                 end

@@ -251,7 +251,7 @@ Two rules follow from that, and both are load-bearing:
   they pressed it, never to one the same digest moved them to afterwards. Apply
   navigation first, then the action; that is the order they happened in.
 - **`dy` and `wheel` arrive apart.** On a list they mean the same thing — add
-  them, or use `ui.steps(nav)`. On a grid they do not: the d-pad walks rows,
+  them, or use `screen.steps(nav)`. On a grid they do not: the d-pad walks rows,
   and the dial walks cells in reading order.
 
 `take()` consumes the `read()` queue too. They are two views of the same input,
@@ -262,8 +262,8 @@ Pick one per app.
 
 Starting a screen, opening a menu, coming back from one. Whatever the user
 pressed at the previous screen was aimed at the previous screen, and letting it
-land on the new one moves a cursor nobody was watching. `ui.run` does this for
-you at both ends; a screen with a loop of its own has to do it itself.
+land on the new one moves a cursor nobody was watching. `screen.run` does this
+for you at both ends; a screen with a loop of its own has to do it itself.
 
 The host flushes on its own when an app starts and when the launcher comes
 back, so an app never inherits the presses that launched it.
@@ -402,10 +402,17 @@ local password = keyboard.prompt{ title = "password", mask = true, max = 63 }
 if password then ... end        -- nil means the user backed out
 ```
 
-It takes over the screen and input until Done or Back. `/lib/ui.lua` has the
-navbar, list and icons the launcher draws with, plus `ui.UP` / `ui.DOWN` /
-`ui.CONFIRM` / `ui.BACK` — event tables that map both controllers onto one
-vocabulary, so a screen never has to know which one is attached.
+It takes over the screen and input until Done or Back.
+
+`/lib/ui.lua` draws: the navbar, header, footer, list, scrollbar and icons the
+launcher is built from, and the geometry to place them at.
+
+`/lib/screen.lua` runs a screen. `screen.UP` / `screen.DOWN` / `screen.CONFIRM`
+/ `screen.BACK` are event tables that map both controllers onto one vocabulary,
+so a screen never has to know which one is attached, and `screen.run` is the
+input → state → render loop the launcher's every list uses — it owns the
+refresh strategy, so a screen describes what it should look like and never
+decides when to draw.
 
 ---
 
