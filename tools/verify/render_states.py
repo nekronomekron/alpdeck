@@ -42,7 +42,9 @@ def _synthetic_card(app_count, stale_every=0):
         os.makedirs(app_dir)
         with open(os.path.join(app_dir, "main.lua"), "w", encoding="utf-8") as handle:
             handle.write("return\n")
-        api = 99 if stale_every and (index % stale_every == 0) else 1
+        # The matching ones declare whatever the firmware currently reports, so
+        # bumping the API does not silently mark every synthetic app stale.
+        api = 99 if stale_every and (index % stale_every == 0) else luaenv.api_version()
         with open(os.path.join(app_dir, "app.lua"), "w", encoding="utf-8") as handle:
             manifest = ('return { name = "Sample App %d", version = "1.%d",'
                         ' api = %d }' % (index + 1, index, api))

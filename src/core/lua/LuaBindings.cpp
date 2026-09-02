@@ -4,9 +4,11 @@
 
 #include "core/lua/DisplayApi.h"
 #include "core/lua/FsApi.h"
+#include "core/lua/FtpApi.h"
 #include "core/lua/InputApi.h"
 #include "core/lua/SettingsApi.h"
 #include "core/lua/SysApi.h"
+#include "core/lua/WifiApi.h"
 
 namespace LuaBindings {
 
@@ -21,6 +23,8 @@ void install(LuaWrapper& wrapper) {
     FsApi::install(L);
     SysApi::install(L);
     SettingsApi::install(L);
+    WifiApi::install(L);
+    FtpApi::install(L);
 }
 
 }  // namespace LuaBindings

@@ -186,7 +186,7 @@ local function draw()
         width = W,
         title = "alpdeck",
         version = VERSION,
-        wifi = sys.wifi(),
+        wifi = wifi.status(),
         menuFocused = state.focus == MENU_FOCUS,
     }
 
@@ -216,11 +216,11 @@ end
 -- value drifts by a dBm between reads and would buy a refresh every half minute
 -- to redraw an identical icon.
 local function signature()
-    local wifi = sys.wifi()
+    local radio = wifi.status()
     local chrome = table.concat({
         state.focus == MENU_FOCUS and "menu" or "list",
-        wifi.enabled and "on" or "off",
-        ui.wifiBars(wifi),
+        radio.enabled and "on" or "off",
+        ui.wifiBars(radio),
     }, "|")
 
     return chrome, table.concat({ state.top, #state.apps }, "|"), state.focus

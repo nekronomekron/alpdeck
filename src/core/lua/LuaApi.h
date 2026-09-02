@@ -10,7 +10,7 @@ namespace LuaApi {
 constexpr const char* kLogTag = "LuaApi";
 
 // This document's version: docs/LUA_API.md. Bump on every breaking change.
-constexpr lua_Integer kApiVersion = 1;
+constexpr lua_Integer kApiVersion = 2;
 
 inline void setField(lua_State* L, const char* key, bool value) {
     lua_pushboolean(L, value);

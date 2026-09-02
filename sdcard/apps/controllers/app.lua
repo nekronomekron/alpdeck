@@ -2,5 +2,5 @@ return {
     name = "Controllers",
     version = "1.0",
     author = "alpdeck",
-    api = 1,
+    api = 2,
 }

@@ -14,6 +14,7 @@ What this can and cannot catch:
 """
 
 import os
+import re
 
 from lupa import LuaRuntime
 
@@ -21,6 +22,22 @@ from epaper import Panel
 from gfx import BLACK, WHITE, load_gfx_font
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def api_version():
+    """The API version the firmware would report, read from LuaApi.h.
+
+    Parsed rather than copied. It was a literal here, and bumping it in the
+    header without bumping it here made every app on the card look stale to the
+    harness and nowhere else -- a drift between the mock and the firmware is
+    exactly the failure this harness exists to catch, not to have.
+    """
+    header = os.path.join(PROJECT_ROOT, "src", "core", "lua", "LuaApi.h")
+    with open(header, encoding="utf-8") as handle:
+        match = re.search(r"kApiVersion\s*=\s*(\d+)", handle.read())
+    if match is None:
+        raise AssertionError("kApiVersion not found in %s" % header)
+    return int(match.group(1))
 
 
 class HarnessStop(Exception):
@@ -99,13 +116,17 @@ function sys.sd_remount() return host.sys_sd_remount() end
 function sys.memory() return host.sys_lua_bytes(), host.sys_free_heap() end
 function sys.temperature() return host.sys_temperature() end
 function sys.info() return host.sys_info() end
-function sys.wifi() return host.sys_wifi() end
 function sys.appdir() return host.sys_appdir() end
-function sys.wifi_scan() return host.sys_wifi_scan() end
-function sys.wifi_configure(ssid, pass) host.sys_wifi_configure(ssid, pass or "") end
-function sys.wifi_forget() host.sys_wifi_forget() end
-function sys.wifi_portal() host.sys_wifi_portal() end
-function sys.ftp_configure(user, pass) host.sys_ftp_configure(user, pass) end
+
+local wifi = {}
+function wifi.status() return host.wifi_status() end
+function wifi.scan() return host.wifi_scan() end
+function wifi.configure(ssid, pass) host.wifi_configure(ssid, pass or "") end
+function wifi.forget() host.wifi_forget() end
+function wifi.portal() host.wifi_portal() end
+
+local ftp = {}
+function ftp.configure(user, pass) host.ftp_configure(user, pass) end
 
 local modules = {}
 function sys.import(path)
@@ -131,7 +152,7 @@ function settings.get(name) return host.settings_get(name) end
 function settings.set(name, value) return host.settings_set(name, value) end
 function settings.keys() return host.settings_keys() end
 
-return display, input, fs, sys, settings
+return display, input, fs, sys, settings, wifi, ftp
 """
 
 
@@ -259,7 +280,7 @@ class Host:
         self.configured_ftp = None
         self.portal_active = False
         self.lua = None  # set by run_script, needed to build Lua tables
-        self.wifi_status = wifi if wifi is not None else {"connected": False}
+        self.wifi_state = wifi if wifi is not None else {"connected": False}
         self.snapshot = {
             "rotary": {"present": True, "select": False, "up": False, "left": False,
                        "down": False, "right": False, "encoder": 0},
@@ -529,11 +550,11 @@ class Host:
             "psram_free_bytes": 8000000, "heap_bytes": 327680,
             "heap_free_bytes": 180000, "heap_min_free_bytes": 150000,
             "uptime_ms": self.clock_ms, "reset_reason": "poweron",
-            "version": "0.1", "api": 1,
+            "version": "0.1", "api": api_version(),
         })
 
-    def sys_wifi(self):
-        status = dict(self.wifi_status)
+    def wifi_status(self):
+        status = dict(self.wifi_state)
         status["enabled"] = self.settings_get("wifi_enabled")
         status["portal"] = self.portal_active
         return self.lua.table_from(status)
@@ -545,25 +566,25 @@ class Host:
         """Mirrors FsApi::resolvePath, which sys.import shares with fs.*."""
         return self.vfs.resolve(path)
 
-    def sys_wifi_scan(self):
+    def wifi_scan(self):
         return self.lua.table_from(
             [self.lua.table_from(network) for network in self.scan_results])
 
-    def sys_wifi_configure(self, ssid, password):
+    def wifi_configure(self, ssid, password):
         # Write-only on the device; here it is recorded so a test can assert
         # what the flow submitted without the value ever being readable in Lua.
         self.configured_wifi = (ssid, password)
-        self.wifi_status = {"connected": True, "ssid": ssid,
+        self.wifi_state = {"connected": True, "ssid": ssid,
                             "ip": "192.168.1.42", "rssi": -55}
 
-    def sys_wifi_forget(self):
+    def wifi_forget(self):
         self.configured_wifi = None
-        self.wifi_status = {"connected": False}
+        self.wifi_state = {"connected": False}
 
-    def sys_wifi_portal(self):
+    def wifi_portal(self):
         self.portal_active = True
 
-    def sys_ftp_configure(self, user, password):
+    def ftp_configure(self, user, password):
         self.configured_ftp = (user, password)
 
     # ----------------------------------------------------------------- settings
@@ -611,12 +632,16 @@ def build_environment(lua, host):
     env["_G"] = env
 
     build = lua.eval("function(src) return assert(load(src, '=bindings', 't')) end")
-    display, input_table, fs_table, sys_table, settings_table = build(_BINDINGS_LUA)(host, env)
+    tables = build(_BINDINGS_LUA)(host, env)
+    (display, input_table, fs_table, sys_table, settings_table, wifi_table,
+     ftp_table) = tables
     env["display"] = display
     env["input"] = input_table
     env["fs"] = fs_table
     env["sys"] = sys_table
     env["settings"] = settings_table
+    env["wifi"] = wifi_table
+    env["ftp"] = ftp_table
     return env
 
 

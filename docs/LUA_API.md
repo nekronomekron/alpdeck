@@ -3,12 +3,17 @@
 Everything runnable on an alpdeck is a Lua script — the launcher included.
 This is the whole surface a script sees.
 
-**API version 1.** Read it from `sys.info().api`. It is an integer, bumped on
+**API version 2.** Read it from `sys.info().api`. It is an integer, bumped on
 every breaking change, and it exists for exactly one reason: `uploadfs` never
 touches the SD card, so a card can hold apps built against an older firmware
-and there is otherwise no way to tell. An app may declare `api = 1` in its
+and there is otherwise no way to tell. An app may declare `api = 2` in its
 manifest; the launcher warns on a mismatch instead of letting it fail in
 confusing ways.
+
+*What changed in 2:* the network bindings left `sys` for tables of their own.
+`sys.wifi()` is `wifi.status()`, `sys.wifi_scan/configure/forget/portal` are
+`wifi.scan/configure/forget/portal`, and `sys.ftp_configure` is
+`ftp.configure`. Nothing else moved.
 
 ## The environment
 
@@ -16,7 +21,8 @@ The standard library is opened with **base, `table`, `string` and `math` only**.
 There is no `io`, no `os`, no `package` and therefore no `require`: one app is
 one file, and `fs.*` is the only route to storage.
 
-Five globals are provided: `display`, `input`, `fs`, `sys` and `settings`.
+Seven globals are provided: `display`, `input`, `fs`, `sys`, `settings`,
+`wifi` and `ftp`.
 
 A script ends by returning. The host tears down the whole VM, so an app needs
 no cleanup of its own.
@@ -333,7 +339,6 @@ sys.exit()          -- stop this script
 sys.memory()        --> luaBytes, freeHeapBytes
 sys.temperature()   --> die temperature in °C
 sys.info()          --> table, below
-sys.wifi()          --> { enabled, connected, portal [, ssid, ip, rssi] }
 sys.import(path)    --> a module (see below)
 ```
 
@@ -355,24 +360,6 @@ card that was seated after boot, swapped, or written to elsewhere, because
 the FTP server's filesystem list, so a card mounted now is reachable over the
 network without a reboot. **Finish reading the card before calling it**, and
 re-list anything you had cached from it afterwards.
-
-Network control, all write-only. Nothing reads a credential back into Lua:
-
-```lua
-sys.wifi_scan()                       --> { {ssid=, rssi=, open=}, ... }
-sys.wifi_configure(ssid [, password]) -- store and connect
-sys.wifi_forget()                     -- forget the stored network
-sys.wifi_portal()                     -- raise the setup portal on demand
-sys.ftp_configure(user, password)     -- change the FTP login
-```
-
-`wifi_scan()` blocks for two to four seconds. That is fine here and nowhere
-else: apps run on their own task, so the main loop, FTP and input polling keep
-running. Results are deduplicated to the strongest access point per name and
-sorted strongest first.
-
-Any app can *set* credentials — worth being plain about. It cannot read them:
-they live in their own store and no binding returns them.
 
 `sys.launch()` only records the request — **return from the script afterwards**.
 The host tears the VM down before starting the next app, which is what keeps
@@ -416,6 +403,37 @@ decides when to draw.
 
 ---
 
+## wifi and ftp
+
+```lua
+wifi.status()                      --> { enabled, connected, portal
+                                   --    [, ssid, ip, rssi] }
+wifi.scan()                        --> { {ssid=, rssi=, open=}, ... }
+wifi.configure(ssid [, password])  -- store and connect
+wifi.forget()                      -- forget the stored network
+wifi.portal()                      -- raise the setup portal on demand
+
+ftp.configure(user, password)      -- change the FTP login
+```
+
+Their own tables rather than a prefix inside `sys`, because they are the one
+group of bindings that is not about the machine the script is running on.
+
+`status()` only reports. There is no switch here: the radio is turned on and
+off through `settings.set("wifi_enabled", ...)`, so a script states an intent
+and the kernel decides what that means for the hardware.
+
+`scan()` blocks for two to four seconds. That is fine here and nowhere else:
+apps run on their own task, so the main loop, FTP and input polling keep
+running. Results are deduplicated to the strongest access point per name and
+sorted strongest first.
+
+Everything that takes a credential is **write-only**. Any app can set one —
+worth being plain about — and none can read one back: they live in their own
+store and no binding returns them.
+
+---
+
 ## settings
 
 ```lua
@@ -439,8 +457,8 @@ an error, not a nil that would read as "off".
 **Setting a value states an intent; it does not perform an action.** The kernel
 watches this store and decides what a change means for the hardware — writing
 `wifi_enabled = false` is what tears down FTP and powers the radio off. That is
-why there is no `sys.wifi_enable()`: connection management stays with the
-kernel, which is also why `sys.wifi()` only reports.
+why there is no `wifi.enable()`: connection management stays with the kernel,
+which is also why `wifi.status()` only reports.
 
 Apps store their own state with `fs.write` in their own folder. This table is
 for device settings, and its keys are fixed.
@@ -451,7 +469,7 @@ for device settings, and its keys are fixed.
 
 ```lua
 {
-  api = 1,                    -- this document's version
+  api = 2,                    -- this document's version
   version = "0.1",            -- firmware version
   chip, revision, cores, cpu_mhz,
   flash_bytes, psram_bytes, psram_free_bytes,
@@ -473,7 +491,7 @@ return {
     name = "Snake",
     version = "1.0",
     author = "you",
-    api = 1,
+    api = 2,
 }
 ```
 

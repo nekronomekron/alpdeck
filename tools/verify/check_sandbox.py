@@ -28,6 +28,12 @@ REQUIRED = [
     ("input table", "type(input) == 'table' and type(input.read) == 'function'", True),
     ("fs table", "type(fs) == 'table' and type(fs.read) == 'function'", True),
     ("sys table", "type(sys) == 'table' and type(sys.info) == 'function'", True),
+    ("wifi table", "type(wifi) == 'table' and type(wifi.status) == 'function'", True),
+    ("ftp table", "type(ftp) == 'table' and type(ftp.configure) == 'function'", True),
+    # The move out of sys is the whole point of api 2; a leftover would mean
+    # two ways to do the same thing, one of them undocumented.
+    ("sys.wifi gone", "sys.wifi == nil and sys.wifi_scan == nil", True),
+    ("sys.ftp_configure gone", "sys.ftp_configure == nil", True),
     ("_G is the sandbox", "_G.display ~= nil and _G.os == nil", True),
     # luaopen_base installs these and they use C stdio, not fs.*; both storage
     # mounts are visible to the ESP VFS, so they were a way around the path

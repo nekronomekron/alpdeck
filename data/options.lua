@@ -29,7 +29,7 @@ local function wifiSetup()
 
     dialog.busy("wifi setup", "scanning...")
 
-    local ok, networks = pcall(sys.wifi_scan)
+    local ok, networks = pcall(wifi.scan)
     if not ok or not networks or #networks == 0 then
         dialog.message("wifi setup", { "no networks found.",
             "move closer and try again." })
@@ -58,7 +58,7 @@ local function wifiSetup()
                     end
                 end
 
-                sys.wifi_configure(network.ssid, password)
+                wifi.configure(network.ssid, password)
                 dialog.message("wifi setup", {
                     "connecting to " .. network.ssid .. "...",
                     "",
@@ -90,7 +90,7 @@ local function ftpLogin()
         return
     end
 
-    sys.ftp_configure(user, password)
+    ftp.configure(user, password)
     dialog.message("ftp login", { "saved. the server restarts with",
         "the new login." })
 end
@@ -132,7 +132,7 @@ end
 
 local function deviceInfo()
     local info = sys.info()
-    local wifi = sys.wifi()
+    local radio = wifi.status()
     local luaBytes, freeHeap = sys.memory()
 
     local lines = {
@@ -153,13 +153,13 @@ local function deviceInfo()
         "",
     }
 
-    if not wifi.enabled then
+    if not radio.enabled then
         lines[#lines + 1] = "wifi    switched off"
-    elseif wifi.connected then
-        lines[#lines + 1] = string.format("wifi    %s", wifi.ssid or "?")
-        lines[#lines + 1] = string.format("ip      %s   %d dBm", wifi.ip or "?",
-            wifi.rssi or 0)
-    elseif wifi.portal then
+    elseif radio.connected then
+        lines[#lines + 1] = string.format("wifi    %s", radio.ssid or "?")
+        lines[#lines + 1] = string.format("ip      %s   %d dBm", radio.ip or "?",
+            radio.rssi or 0)
+    elseif radio.portal then
         lines[#lines + 1] = "wifi    setup portal is up"
     else
         lines[#lines + 1] = "wifi    not connected"
@@ -229,7 +229,7 @@ function options.run()
                 label = "setup portal",
                 screen = true,
                 action = function()
-                    sys.wifi_portal()
+                    wifi.portal()
                     dialog.message("setup portal", {
                         "the alpdeck access point is up.",
                         "join it from a phone or laptop",
@@ -241,7 +241,7 @@ function options.run()
                 label = "forget network",
                 screen = true,
                 action = function()
-                    sys.wifi_forget()
+                    wifi.forget()
                     dialog.message("wifi", { "stored network forgotten." })
                 end,
             },
