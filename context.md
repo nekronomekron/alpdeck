@@ -1,6 +1,6 @@
 # alpdeck — project context
 
-As of 2026-08-30. Handoff document: what this is, how it is put together, and
+As of 2026-09-02. Handoff document: what this is, how it is put together, and
 which of it has actually been seen working.
 
 ## Overview
@@ -60,8 +60,10 @@ src/
   config/       AppConfig.h -- every pin, timeout and path
   core/         the kernel: BootSequence, Settings, Vfs, and lua/
     lua/        LuaHost, LuaWrapper glue, LuaContext, and one file per API
-                table: DisplayApi, InputApi, FsApi, SysApi, SettingsApi
-  peripherals/  Display, Input, RotaryController, GamepadController,
+                table: DisplayApi, InputApi, FsApi, SysApi, SettingsApi,
+                WifiApi, FtpApi
+  peripherals/  Display + PanelPower, Input + InputDigest, Controller and its
+                two implementations (RotaryController, GamepadController),
                 SeesawButtons, PowerButton
   net/          Network, CaptivePortal, FtpService -- one subsystem, one
                 lifecycle
@@ -71,11 +73,21 @@ src/
 
 data/           flashed to LittleFS with `uploadfs`
   boot.lua      user hook, runs before the launcher
-  launcher.lua  the launcher
+  launcher.lua  the launcher: find apps, list them, launch one
+  options.lua   the options menu and the screens behind its rows. Imported
+                only when the menu is opened
   lib/          shared Lua modules, loaded with sys.import
-    ui.lua      navbar, list, icons, and the controller event vocabulary
+    ui.lua        navbar, header, footer, list, scrollbar, icons, geometry
+    screen.lua    the controller vocabulary and screen.run, the input ->
+                  state -> render loop that owns the refresh strategy
+    menu.lua      the modal list screen every sub-screen is built on
+    dialog.lua    message and busy screens
     keyboard.lua  on-screen keyboard
 ```
+
+The line between `ui.lua` and `screen.lua` is the line you change along:
+widgets change for how something should look, the runtime for what a 609 ms
+refresh costs.
 
 Modules that are genuinely singletons are namespaces with their state in an
 anonymous namespace in the .cpp. Things with real per-instance state stay
@@ -120,6 +132,14 @@ button.
   loop could longjmp straight through C++ destructors. Only safe because the
   panel fits one page. `beginFrame(x, y, w, h)` binds a frame to a rectangle,
   which is what `display.begin`'s region form uses.
+- **PanelPower** — the panel's lock and its power deadline, split out of
+  Display because it is not a drawing question: the panel is a shared device
+  with a rail that must not be left up, and the main loop switches it off while
+  a Lua app may be mid-refresh. It never touches the panel — Display hands it a
+  function that hibernates. Every path to the hardware takes a scoped
+  `PanelPower::Lock`; the main loop's is `Wait::Never`, because a busy panel is
+  one mid-refresh and blocking there would stall input polling for the length
+  of a frame.
 - **Settings** — NVS-backed device settings, each key declared in one table
   with its type, default and range. The kernel reads several before any Lua
   runs (whether to bring the radio up at all), which is what rules out a Lua
@@ -142,8 +162,22 @@ button.
 - **FtpService** — LittleFS as `/flash`, SD as `/sd`. Starts only on a WiFi
   connection. Heap lifecycle per connection cycle: the library has no `stop()`,
   but `~FTPServer` → `~WiFiServer` → `end()` closes the socket cleanly.
-- **Input** — facade over **RotaryController** (5740) and **GamepadController**
-  (5743); **SeesawButtons** is the shared debounce and long-press helper.
+
+  **The server object belongs to `loop()`, on the main loop, and to nothing
+  else.** Everything else states an intent — `setEnabled()`, `requestRebuild()`
+  — and `loop()` reconciles. The callers are the settings hook, the connect
+  callback and two Lua bindings, and those run on the Lua task while the main
+  loop is inside `server->handle()`; deleting it there is a dangling pointer,
+  and it was reachable from the options menu.
+- **Input** — facade over the controllers. Each implements **Controller**
+  (`begin`, `available`, `poll`, `fill`) and the facade holds them in one
+  array, so a third device is a class plus one entry rather than a branch in
+  `init()` and another in `poll()`. What it still costs: new event names in
+  `Event` and `eventName()`, a case in the digest's classification, and
+  `Snapshot` fields for any level-triggered state — that is the event
+  vocabulary, and no abstraction invents it. Today the array holds
+  **RotaryController** (5740) and **GamepadController** (5743);
+  **SeesawButtons** is the shared debounce and long-press helper.
   `init()` probes both, true on ≥ 1. `poll()` owns I2C exclusively on the main
   loop; the Lua task consumes what it publishes. The bus is never touched from
   two tasks. Buttons without a long-press fire on **press**; only
@@ -153,7 +187,9 @@ button.
   decides how it behaves when the panel cannot keep up:
 
   - `read()` — the FreeRTOS queue, every edge in order. For games.
-  - `take()` — a **coalesced digest** since the last call. For screens. Relative
+  - `take()` — a **coalesced digest** since the last call, kept by
+    **InputDigest**, which is its own translation unit: the facade is a driver
+    problem, the digest is a concurrency one. For screens. Relative
     navigation adds up (`dx`, `dy`, `wheel`); a discrete `action` is a **queue
     of one**, so a second press during a refresh is dropped rather than acted
     on later. Navigation arriving *after* an action is held for the next
@@ -162,7 +198,7 @@ button.
     position**, so coalescing it costs nothing however long a refresh blocked.
 
   `flush()` drops all of it and rebaselines the encoder. `BootSequence` calls
-  it on every app start and launcher return; `ui.run` calls it entering and
+  it on every app start and launcher return; `screen.run` calls it entering and
   leaving a screen. Without it, detents turned at the old screen land on the
   new one.
 - **PowerButton** — press/hold detection, wake confirmation, deep-sleep entry.
@@ -202,11 +238,11 @@ per refresh mode).
 
 ## Drawing: input, state, render
 
-Screens do not draw in response to an event. `ui.run` in `lib/ui.lua` is the
-loop every list screen uses, and it works one way round only:
+Screens do not draw in response to an event. `screen.run` in `lib/screen.lua`
+is the loop every list screen uses, and it works one way round only:
 
-1. Ask the screen for a **signature** — two comparable values, one for the
-   chrome and one for the body — describing what the panel *should* show.
+1. Ask the screen for a **signature** — three comparable values: the chrome,
+   the body, and the cursor — describing what the panel *should* show.
 2. Redraw only if that differs from what is on the panel. Body-only change →
    the refresh is confined to the body region. Chrome change → whole-panel
    partial. First frame of a screen, or one in every `refresh_every` → full,
@@ -286,18 +322,33 @@ python tools/verify/run.py --bless
 python tools/verify/render_ui.py       # previews
 ```
 
-`tools/verify/` runs the launcher and both apps through a real Lua 5.5 VM under
+`tools/verify/` runs the launcher and the apps through a real Lua 5.5 VM under
 the same restricted `_ENV` the firmware builds, renders what the panel would
 show through a faithful Adafruit_GFX port, and compares against committed
 golden images. See `tools/verify/README.md` for what it does and does not
 cover — in particular, it cannot see bugs on the C side of a binding.
+
+`fixtures/` holds scripts that are not shipped, for states the launcher guards
+against reaching before it ever gets there — an empty menu, and one holding
+nothing but group labels. The empty state of a shared widget is the one nobody
+looks at, and both used to be a crash.
+
+**The mock reads what it can out of the firmware rather than restating it.**
+The API version comes from `LuaApi.h` and the fonts from the same headers
+PlatformIO fetched. Anything hard-coded here is a drift waiting to happen: an
+`api = 1` literal in the harness survived a bump in the header and quietly
+marked every app on the card stale.
 
 `test/native/` is reserved for `pio test`. It does not run here: only the ESP32
 cross-toolchains are installed, and PlatformIO's native platform needs a host
 compiler. Installing MSYS2/MinGW-w64 is all that is missing.
 
 There is no CI. The gate is: both environments build, `pio check` is clean over
-`src/`, and the harness passes.
+`src/`, and the harness passes. Run it before every commit.
+
+**A structural change must not move a pixel.** The goldens are what says a
+refactor was a refactor; when one does change, bless it on its own and look at
+the difference first.
 
 ## Current state
 
@@ -320,6 +371,17 @@ There is no CI. The gate is: both environments build, `pio check` is clean over
 - Network, captive portal and FTP with `/flash` + `/sd`.
 
 ## Open points
+
+0. **Nothing since the 2026-09-02 restructure has run on hardware.** Both
+   environments build, `pio check` is clean and the harness renders every state
+   byte-identical apart from one deliberate pixel change, but that says nothing
+   about the C side of a binding. In order of what would hurt most if wrong:
+   the FTP reconcile (the server is built and torn down on the main loop now),
+   the deferred power-down through `PanelPower::Lock`, the digest after its move
+   into `InputDigest`, and the `wifi.*` / `ftp.*` tables.
+
+   **Re-copy the SD card before testing.** The API is 2, and an app declaring
+   1 is marked `api!` in the launcher.
 
 1. **The options menu has not run on hardware.** It builds and passes the
    harness, but the harness cannot see the C side of a binding. Worth checking
