@@ -16,7 +16,15 @@ namespace {
 // Heap-allocated per start/stop cycle: the library has no stop(), but the
 // destructor chain (~FTPServer -> ~WiFiServer -> end()) closes the listening
 // socket and drops every connection, which is the only clean way to stop it.
+//
+// Owned by loop(), and touched from nowhere else. See the header.
 FTPServer* server = nullptr;
+
+// What the server should be, written from whichever task asked. Single words
+// read once per main-loop pass, so no lock: the worst a torn read could do is
+// reconcile one pass later, which is 1ms of a server nobody is talking to yet.
+volatile bool wantRunning = false;
+volatile bool wantRebuild = false;
 
 // Its own namespace, alongside the WiFi credentials rather than in the general
 // settings store: a password that any app could read back is not a password.
@@ -39,17 +47,15 @@ Login loadLogin() {
     return login;
 }
 
-}  // namespace
-
-void start() {
-    if (server != nullptr) {
-        return;
-    }
-
+// Both of these run on the main loop only, from reconcile().
+void startServer() {
     const Login login = loadLogin();
     server = new FTPServer();
     server->addUser(login.user, login.password);
     server->addFilesystem(Config::FTP_MOUNT_FLASH, &LittleFS);
+
+    // Asked at construction, because the library reads its filesystem list
+    // once. A card mounted later arrives through requestRebuild().
     if (Vfs::sdMounted()) {
         server->addFilesystem(Config::FTP_MOUNT_SD, &SD);
     }
@@ -58,24 +64,37 @@ void start() {
     LOGI(kLogTag, "Server started on %s", WiFi.localIP().toString().c_str());
 }
 
-void stop() {
-    if (server == nullptr) {
-        return;
-    }
-
+void stopServer() {
     delete server;
     server = nullptr;
 
     LOGI(kLogTag, "Server stopped");
 }
 
-void remount() {
-    if (server == nullptr) {
-        return;  // nothing running to disagree with the card
+// Brings the server in line with what was asked for. The rebuild is handled
+// first so that a request arriving in the same pass as a stop does not resurrect
+// a server nobody wants.
+void reconcile() {
+    if (wantRebuild) {
+        wantRebuild = false;
+        if (server != nullptr && wantRunning) {
+            stopServer();
+            startServer();
+        }
     }
-    stop();
-    start();
+
+    if (wantRunning && server == nullptr) {
+        startServer();
+    } else if (!wantRunning && server != nullptr) {
+        stopServer();
+    }
 }
+
+}  // namespace
+
+void setEnabled(bool enabled) { wantRunning = enabled; }
+
+void requestRebuild() { wantRebuild = true; }
 
 void configure(const String& user, const String& password) {
     Preferences prefs;
@@ -88,10 +107,7 @@ void configure(const String& user, const String& password) {
 
     // The library reads its user list at construction, so a running server
     // keeps the old login until it is rebuilt.
-    if (server != nullptr) {
-        stop();
-        start();
-    }
+    requestRebuild();
 }
 
 bool hasCustomLogin() {
@@ -103,6 +119,8 @@ bool hasCustomLogin() {
 }
 
 void loop() {
+    reconcile();
+
     if (server != nullptr) {
         server->handle();
     }

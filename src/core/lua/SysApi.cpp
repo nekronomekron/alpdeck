@@ -73,8 +73,9 @@ int sdRemount(lua_State* L) {
 
     // FTP built its filesystem list at start-up from the old answer, so it has
     // to be told; without this a card mounted now stays invisible over the
-    // network until the next reboot.
-    FtpService::remount();
+    // network until the next reboot. Only a request: the server is rebuilt on
+    // the main loop, never from this task.
+    FtpService::requestRebuild();
 
     lua_pushboolean(L, mounted);
     return 1;

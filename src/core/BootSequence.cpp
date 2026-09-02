@@ -77,23 +77,26 @@ void startApp(const String& path) {
 }
 
 // FTP only makes sense with a network under it, so its own setting and the
-// connection state are checked together. Called on a settings change and from
-// the connect callback, which is what keeps one rule in one place.
+// connection state are checked together. Called on a settings change, on
+// connect and on disconnect, which is what keeps one rule in one place.
+//
+// It only states the intent: FtpService::loop() builds or tears the server
+// down, on the main loop, because this runs on the Lua task whenever a setting
+// is what changed.
 void applyFtpSetting() {
     const bool enabled = Settings::getBool(Settings::kFtpEnabled);
     const bool connected = NetworkService::isConnected();
+    const bool wanted = enabled && connected;
 
-    if (enabled && connected) {
-        FtpService::start();
-        return;
+    if (!wanted) {
+        // Logged rather than silent. Declining to start a server that was never
+        // running logs nothing on its own, which is how an FTP service that
+        // never came up after a boot went unnoticed for as long as it did.
+        LOGD(kLogTag, "FTP not started (enabled=%d, connected=%d)",
+             static_cast<int>(enabled), static_cast<int>(connected));
     }
 
-    // Logged rather than silent. Declining to start a server that was never
-    // running logs nothing on its own, which is how an FTP service that never
-    // came up after a boot went unnoticed for as long as it did.
-    LOGD(kLogTag, "FTP not started (enabled=%d, connected=%d)",
-         static_cast<int>(enabled), static_cast<int>(connected));
-    FtpService::stop();
+    FtpService::setEnabled(wanted);
 }
 
 // The kernel's half of the declarative settings contract: Lua writes a value,
@@ -234,7 +237,7 @@ void run() {
     // from the connect callback rather than here -- that covers both a
     // boot-time auto-connect and credentials arriving later via the portal.
     NetworkService::onConnected(applyFtpSetting);
-    NetworkService::onDisconnected(FtpService::stop);
+    NetworkService::onDisconnected(applyFtpSetting);
     NetworkService::init();
 
     if (!LuaHost::init()) {

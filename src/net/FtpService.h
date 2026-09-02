@@ -5,23 +5,32 @@
 // FTP access to the device's storage: LittleFS as /flash and, when a card is
 // mounted, SD as /sd. Started from the network's connect callback and torn
 // down again on disconnect, so it only ever exists while it is reachable.
+//
+// Threading: the server object is created and destroyed by loop() alone, on
+// the main loop. Everything else here only records what the server SHOULD be
+// -- because the callers are the settings hook, the connect callback and two
+// Lua bindings, and those run on the Lua task while the main loop is inside
+// server->handle(). Deleting it out from under that is a dangling pointer, and
+// it was reachable from the options menu.
 namespace FtpService {
 
 constexpr const char* kLogTag = "FTP";
 
-// Asks Vfs for the card rather than being told about it: one answer to "is
-// there an SD card", in the module that owns the mount.
-void start();
-void stop();
+// Records whether the server should be running. Takes effect on the next
+// loop(), which is where the object is actually built or torn down.
+//
+// Whether the card is mounted is not a parameter: start-up asks Vfs, so there
+// is one answer to "is there an SD card", in the module that owns the mount.
+void setEnabled(bool enabled);
 
-// Rebuilds the server, but only if it is running, so its filesystem list
-// matches a card that has just been mounted or lost. Cheap: a new listening
+// Asks for the running server to be rebuilt, so its filesystem list or its
+// login matches what has just changed. Nothing happens while it is stopped: a
+// server that starts later reads both fresh anyway. Cheap -- a new listening
 // socket, not a reconnect.
-void remount();
+void requestRebuild();
 
-// Replaces the stored login and restarts the server if it is running.
-// Write-only: nothing reads the password back out, for the same reason the
-// WiFi key is not readable.
+// Replaces the stored login and rebuilds the server. Write-only: nothing reads
+// the password back out, for the same reason the WiFi key is not readable.
 void configure(const String& user, const String& password);
 
 // True while a login other than the compiled-in default is stored. The
@@ -29,7 +38,8 @@ void configure(const String& user, const String& password);
 // rather than silently the password.
 bool hasCustomLogin();
 
-// Services client connections. Call from loop(); no-op while stopped.
+// Reconciles the server with what was asked for, then services client
+// connections. Call from loop().
 void loop();
 
 }  // namespace FtpService
