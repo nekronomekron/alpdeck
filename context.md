@@ -372,29 +372,28 @@ the difference first.
   after its move into `InputDigest`, and the `wifi.*` / `ftp.*` tables. It also
   answers the stall question — nothing hangs when an app draws while FTP is
   serving.
+- **The standby screen and the idle sleep work**, which are the two states that
+  can only be reached by leaving the device alone. They are also the only thing
+  that exercises `Display::powerDown()` and the deep-sleep entry at all, so this
+  is what confirms `PanelPower`'s lock on that path and the `main.cpp` split into
+  PowerButton and BootSequence.
 
 **Built and verified off-device only:**
 
-- Everything from the 2026-08-30 refactor: the directory restructure, the
-  namespace conversion, the `main.cpp` split into PowerButton and
-  BootSequence, the reworked Lua API (fonts, ink, sprites, region refresh,
-  `sys.appdir`, `sys.info().api`), the reworked launcher, and the redrawn logo
-  and bootscreen.
 - The captive portal.
+- `display.bitmap` in the hello app, and the redrawn logo with its hidden-line
+  removal — both are drawn every time the thing they belong to is on screen, so
+  they may well be fine; nobody has said so.
 
 ## Open points
 
-1. **The two states you only see by waiting.** Everything else in the options
-   menu has now run on hardware; the standby screen and the idle sleep have
-   not, because reaching either means leaving the device alone for as long as
-   `sleep_after_min` says. Both go through `Display::powerDown()`, which takes
-   the panel lock, so what to look for is a panel that is genuinely hibernated
-   afterwards rather than left with its rail up.
-
-   The rest of the deferred power-down is confirmed: `power` reads 0 across a
-   run of frames and a warm frame is 143 ms cheaper than the old regime —
-   753 ms down to 609 ms for a whole panel (cold 651 plus a 102 ms power-down,
-   against a warm frame that pays neither).
+1. **The deferred power-down is confirmed, its current draw is not.** `power`
+   reads 0 across a run of frames and a warm frame is 143 ms cheaper than the
+   old regime — 753 ms down to 609 ms for a whole panel (cold 651 plus a 102 ms
+   power-down, against a warm frame that pays neither). Standby and idle sleep
+   both behave. What none of that measures is the rail actually being down
+   afterwards: `hibernate()` returning is not an ammeter. Only worth chasing if
+   this ever runs on a battery.
 2. **Still unconfirmed from the earlier refactor:** `display.bitmap` in the
    hello app, and the redrawn logo with its hidden-line removal.
 3. **32-bit integers and floats in Lua** (from `LUA_32BITS`) — sufficient for
