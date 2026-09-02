@@ -257,9 +257,9 @@ local function runMenu(opts)
     local visible = ui.visibleRows(H - 24, listTop)
 
     -- Start on the first row that is not a group label. ui.list never marks a
-    -- header active because `selected` never points at one.
-    local selected = opts.items[1].header
-        and ui.nextSelectable(opts.items, 1, 1) or 1
+    -- header active because `selected` never points at one, and nil is a real
+    -- answer: a menu with nothing selectable still draws, and back still leaves.
+    local selected = ui.firstSelectable(opts.items)
     local top = 1
 
     local function render(item, y, active)
@@ -308,6 +308,10 @@ local function runMenu(opts)
     -- be selected are not evenly spaced -- nextSelectable is what skips the
     -- group labels, and it only knows how to take one step.
     local function moveBy(steps)
+        if selected == nil then
+            return  -- nothing to move between
+        end
+
         local direction = steps > 0 and 1 or -1
         for _ = 1, math.abs(steps) do
             local target = ui.nextSelectable(opts.items, selected, direction)

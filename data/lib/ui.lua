@@ -184,6 +184,20 @@ function ui.nextSelectable(items, from, direction)
     return nil
 end
 
+-- The first row that can be selected, or nil when a list is empty or holds
+-- nothing but group labels. A screen has to cope with nil rather than assume
+-- row 1: a menu built from a scan or a directory can come back with no rows at
+-- all, and landing the cursor on a label is the other half of the same bug.
+function ui.firstSelectable(items)
+    if items[1] == nil then
+        return nil
+    end
+    if not items[1].header then
+        return 1
+    end
+    return ui.nextSelectable(items, 1, 1)
+end
+
 -- Right-aligned label on a row, for a version or a setting's value.
 function ui.rowValue(text, y, width)
     if text == nil or text == "" then

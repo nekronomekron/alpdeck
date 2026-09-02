@@ -5,13 +5,17 @@ same restricted environment the firmware builds, renders what the panel would
 show, and compares it against committed reference images.
 
 ```bash
-~/.platformio/penv/Scripts/python.exe tools/verify/run.py
+python tools/verify/run.py
 ```
 
-There is no system Python on this machine; PlatformIO's `penv` is the
-interpreter, and it already has `lupa` 2.8. Nothing else is needed — the PNG
-writer is standard library only, deliberately, so the harness cannot rot because
-Pillow is missing somewhere.
+The only requirement is a Python with `lupa` — the harness needs a real Lua 5.5
+VM and nothing else. The PNG writer is standard library only, deliberately, so
+this cannot rot because Pillow is missing somewhere.
+
+On this machine that is the system Python 3.9 (`lupa` installed). PlatformIO's
+`penv` interpreter **no longer has `lupa`** and fails at the import; if you want
+to run the harness through it, `~/.platformio/penv/Scripts/python.exe -m pip
+install lupa` first.
 
 | flag | effect |
 | --- | --- |
@@ -26,7 +30,7 @@ There is a second script for the screens the firmware draws in C++ rather than
 through Lua:
 
 ```bash
-~/.platformio/penv/Scripts/python.exe tools/verify/render_ui.py
+python tools/verify/render_ui.py
 ```
 
 It writes the mark at six widths, the bootscreen and the error screen into

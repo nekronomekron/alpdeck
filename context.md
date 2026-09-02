@@ -281,9 +281,9 @@ empty.
 ## Verification
 
 ```
-~/.platformio/penv/Scripts/python.exe tools/verify/run.py       # the gate
-~/.platformio/penv/Scripts/python.exe tools/verify/run.py --bless
-~/.platformio/penv/Scripts/python.exe tools/verify/render_ui.py # previews
+python tools/verify/run.py             # the gate
+python tools/verify/run.py --bless
+python tools/verify/render_ui.py       # previews
 ```
 
 `tools/verify/` runs the launcher and both apps through a real Lua 5.5 VM under
